@@ -300,7 +300,7 @@ window.App = window.App || {};
         if (dup) return;
         Store.addCompany({
           name: s.name, country: s.country, city: s.city || "", website: s.website || "",
-          materials: (s.materials || []).slice(), notes: s.notes || ""
+          email: s.email || "", materials: (s.materials || []).slice(), notes: s.notes || ""
         });
         added++;
       });

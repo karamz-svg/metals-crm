@@ -22,16 +22,16 @@ window.App = window.App || {};
   "use strict";
 
   var N = "Research lead — verify domain & contact; pull verified emails via Apollo.";
-  function C(name, country, city, website, materials) {
-    return { name: name, country: country, city: city, website: website, materials: materials, notes: N };
+  function C(name, country, city, website, materials, email) {
+    return { name: name, country: country, city: city, website: website, materials: materials, email: email || "", notes: N };
   }
 
   App.EU_SEED = [
     /* ---------------- Germany ---------------- */
-    C("Aurubis AG", "DE", "Hamburg", "aurubis.com", ["copper-cathode", "cu-scrap-millberry", "copper-billet"]),
-    C("Wieland-Werke AG", "DE", "Ulm", "wieland.com", ["brass-alloy-ingots", "brass-billet", "copper-busbar"]),
+    C("Aurubis AG", "DE", "Hamburg", "aurubis.com", ["copper-cathode", "cu-scrap-millberry", "copper-billet"], "info@aurubis.com"),
+    C("Wieland-Werke AG", "DE", "Ulm", "wieland.com", ["brass-alloy-ingots", "brass-billet", "copper-busbar"], "info@wieland.com"),
     C("KME Germany GmbH", "DE", "Osnabrück", "kme.com", ["copper-busbar", "copper-pipe", "brass-billet"]),
-    C("TRIMET Aluminium SE", "DE", "Essen", "trimet.eu", ["aluminium-ingots", "al-sows", "al-scrap-ubc"]),
+    C("TRIMET Aluminium SE", "DE", "Essen", "trimet.eu", ["aluminium-ingots", "al-sows", "al-scrap-ubc"], "sales@trimet.de"),
     C("Speira GmbH", "DE", "Grevenbroich", "speira.com", ["aluminium-ingots", "al-scrap-ubc"]),
     C("MKM Mansfelder Kupfer und Messing", "DE", "Hettstedt", "mkm.eu", ["copper-busbar", "copper-rod", "brass-billet"]),
     C("Diehl Metall", "DE", "Röthenbach", "diehl.com", ["brass-alloy-ingots", "brass-billet"]),
@@ -98,7 +98,7 @@ window.App = window.App || {};
     C("Boliden Harjavalta Oy", "FI", "Harjavalta", "boliden.com", ["copper-cathode"]),
 
     /* ---------------- Austria ---------------- */
-    C("AMAG Austria Metall AG", "AT", "Ranshofen", "amag.at", ["aluminium-ingots", "al-scrap-ubc", "al-sows"]),
+    C("AMAG Austria Metall AG", "AT", "Ranshofen", "amag.at", ["aluminium-ingots", "al-scrap-ubc", "al-sows"], "md-amag@amag.at"),
     C("Montanwerke Brixlegg AG", "AT", "Brixlegg", "montanwerke-brixlegg.com", ["copper-cathode", "cu-scrap-millberry"]),
 
     /* ---------------- Greece ---------------- */

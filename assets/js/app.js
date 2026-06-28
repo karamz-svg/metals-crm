@@ -106,12 +106,9 @@ window.App = window.App || {};
 
     function countWith(code) { return companies.filter(function (x) { return x.country === code; }).length; }
 
-    // EU countries: only show those that actually have buyers (hide empty ones).
-    var euActive = App.COUNTRIES.filter(function (c) { return countWith(c.code) > 0; });
-    var euItems = euActive.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
-    var euSection = euActive.length
-      ? '<div class="nav-section"><div class="label">EU Countries (' + euActive.length + ")</div>" + euItems + "</div>"
-      : "";
+    // Show all 27 EU member states (even with no buyers yet).
+    var euItems = App.COUNTRIES.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
+    var euSection = '<div class="nav-section"><div class="label">EU Countries (27)</div>' + euItems + "</div>";
 
     // My countries: always show every custom country the user added.
     var custom = Store.customCountries();
@@ -156,9 +153,8 @@ window.App = window.App || {};
         withReply.map(function (c) { return esc(c.name); }).join(", ") + "</div>"
       : "";
 
-    // Only countries that have buyers (active EU) plus all custom countries.
-    var euActive = App.COUNTRIES.filter(function (c) { return Store.companiesByCountry(c.code).length > 0; });
-    var tileCountries = euActive.concat(Store.customCountries());
+    // All 27 EU countries plus any custom countries.
+    var tileCountries = App.COUNTRIES.concat(Store.customCountries());
     var tiles = tileCountries.map(function (c) {
       var list = Store.companiesByCountry(c.code);
       var dots = ["red", "yellow", "green"].map(function (st) {
