@@ -347,13 +347,128 @@ async function gmailCheck(emails) {
   return out;
 }
 
+/* ---------------- Live prices (optional) ----------------
+   LME/SMM official data is licensed, so this adapter pulls from a
+   provider you configure and normalizes everything to USD/tonne.
+   Providers (env PRICE_PROVIDER):
+     • metals-api  — metals-api.com, LME-* symbols (free tier available)
+     • custom      — PRICE_FEED_URL returns our normalized JSON directly
+     • mock        — sample numbers, no key/network (default in MOCK mode)
+   It caches results and refreshes at most once per PRICE_REFRESH_HOURS
+   (a daily scan), so the app can show "today's price" without burning
+   your provider quota. Calibration knobs (PRICE_INVERT / PRICE_UNIT /
+   PRICE_MULT) let you match LME exactly regardless of provider units. */
+const PRICE_PROVIDER = (process.env.PRICE_PROVIDER || (MOCK ? "mock" : "")).toLowerCase();
+const PRICE_API_KEY = process.env.PRICE_API_KEY || "";
+const PRICE_BASE = process.env.PRICE_BASE || "USD";
+const PRICE_FEED_URL_CUSTOM = process.env.PRICE_FEED_URL || "";
+const PREMIUM_FEED_URL = process.env.PREMIUM_FEED_URL || "";
+const PRICE_REFRESH_MS = Math.max(1, Number(process.env.PRICE_REFRESH_HOURS || 12)) * 3600 * 1000;
+const PRICE_INVERT = /^(1|yes|true)$/i.test(process.env.PRICE_INVERT || (PRICE_PROVIDER === "metals-api" ? "yes" : "no"));
+const PRICE_UNIT = (process.env.PRICE_UNIT || "tonne").toLowerCase();
+const UNIT_MULT = PRICE_UNIT === "lb" ? 2204.62 : (PRICE_UNIT === "oz" ? 32150.7 : 1);
+const PRICE_MULT = Number(process.env.PRICE_MULT || 1);
+const METALS_API_SYM = { copper: "LME-XCU", aluminium: "LME-ALU", zinc: "LME-ZNC", lead: "LME-LEAD", nickel: "LME-NI" };
+
+let priceCache = { data: null, ts: 0 };
+
+function calibrate(raw) {
+  if (raw == null || isNaN(raw)) return null;
+  let v = Number(raw);
+  if (PRICE_INVERT && v !== 0) v = 1 / v;
+  v = v * UNIT_MULT * PRICE_MULT;
+  return Math.round(v);
+}
+
+async function fetchMetalsApi() {
+  if (!PRICE_API_KEY) throw new Error("PRICE_API_KEY not set for metals-api.");
+  const syms = Object.values(METALS_API_SYM).join(",");
+  const url = "https://metals-api.com/api/latest?access_key=" + encodeURIComponent(PRICE_API_KEY) +
+              "&base=" + encodeURIComponent(PRICE_BASE) + "&symbols=" + encodeURIComponent(syms);
+  const r = await fetch(url);
+  const j = await r.json();
+  if (!j || j.success === false) throw new Error((j && j.error && (j.error.info || j.error.message)) || "metals-api error");
+  const rates = j.rates || {};
+  const out = { currency: PRICE_BASE, source: "Metals-API (LME, delayed)", asOf: Date.now(), delayed: true };
+  for (const metal in METALS_API_SYM) {
+    const sym = METALS_API_SYM[metal];
+    let raw = rates[sym];
+    if (raw == null) raw = rates[PRICE_BASE + sym]; // some plans key as "USDLME-XCU"
+    out[metal] = calibrate(raw);
+  }
+  return out;
+}
+
+async function fetchCustomPrices() {
+  if (!PRICE_FEED_URL_CUSTOM) throw new Error("PRICE_FEED_URL not set for custom provider.");
+  const r = await fetch(PRICE_FEED_URL_CUSTOM);
+  const j = await r.json();
+  j.asOf = j.asOf || Date.now();
+  j.source = j.source || "Custom feed";
+  return j;
+}
+
+async function fetchPremiums() {
+  if (!PREMIUM_FEED_URL) return null;
+  try {
+    const r = await fetch(PREMIUM_FEED_URL);
+    const j = await r.json();
+    return (j && (j.premiums || j)) || null; // { aluminium: 290, copper: ... } USD/MT
+  } catch (e) { console.warn("[prices] premium feed failed:", e.message); return null; }
+}
+
+function mockPrices() {
+  return {
+    copper: 9250, aluminium: 2350, zinc: 2700, lead: 2050, nickel: 16500,
+    premium: 290, premiums: { aluminium: 290 },
+    currency: "USD", source: "MOCK (sample prices)", asOf: Date.now(), delayed: true
+  };
+}
+
+async function getPrices(force) {
+  if (!force && priceCache.data && (Date.now() - priceCache.ts) < PRICE_REFRESH_MS) {
+    return Object.assign({}, priceCache.data, { cached: true });
+  }
+  let data;
+  if (PRICE_PROVIDER === "mock") data = mockPrices();
+  else if (PRICE_PROVIDER === "custom") data = await fetchCustomPrices();
+  else if (PRICE_PROVIDER === "metals-api") data = await fetchMetalsApi();
+  else throw new Error("No price provider configured. Set PRICE_PROVIDER (metals-api | custom | mock) in .env.");
+
+  const prem = await fetchPremiums();
+  if (prem) {
+    data.premiums = Object.assign({}, data.premiums || {}, prem);
+    if (prem.aluminium != null) data.premium = prem.aluminium;
+  }
+  priceCache = { data: data, ts: Date.now() };
+  return data;
+}
+
+// Daily background scan (best-effort; only when a real provider is set).
+if (PRICE_PROVIDER && PRICE_PROVIDER !== "mock") {
+  const t = setInterval(function () {
+    getPrices(true).catch(function (e) { console.warn("[prices] scheduled refresh failed:", e.message); });
+  }, PRICE_REFRESH_MS);
+  if (t.unref) t.unref();
+}
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, {});
   const path = req.url.split("?")[0];
 
   if (req.method === "GET" && path === "/health") {
-    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE });
+    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE, priceProvider: PRICE_PROVIDER || "none" });
+  }
+
+  if (req.method === "GET" && path === "/api/prices") {
+    try {
+      const force = /[?&]force=1/.test(req.url);
+      const data = await getPrices(force);
+      return send(res, 200, data);
+    } catch (e) {
+      return send(res, 400, { error: e.message });
+    }
   }
 
   // ---- Gmail OAuth + reply detection ----
@@ -437,6 +552,7 @@ server.listen(PORT, () => {
   console.log("  mode:", MOCK ? "MOCK (no real Apollo calls)" : "LIVE", "| key:", API_KEY ? "set" : "MISSING");
   console.log("  phone webhook:", WEBHOOK_BASE_URL ? (WEBHOOK_BASE_URL + "/api/apollo-webhook") : "disabled (set WEBHOOK_BASE_URL)");
   console.log("  gmail:", HAS_GOOGLE ? ("configured · redirect " + GOOGLE_REDIRECT_URI) : "disabled (set GOOGLE_CLIENT_ID/SECRET)");
-  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones,");
+  console.log("  prices:", PRICE_PROVIDER ? (PRICE_PROVIDER + " · refresh every " + (PRICE_REFRESH_MS / 3600000) + "h") : "disabled (set PRICE_PROVIDER)");
+  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones, GET /api/prices,");
   console.log("             GET /api/gmail/status, GET /api/gmail/auth, GET /api/gmail/callback, POST /api/gmail/check");
 });

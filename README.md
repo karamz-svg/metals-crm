@@ -17,6 +17,7 @@ European Union. It runs entirely in your browser — no install, no build step, 
 | All **27 EU countries** with per-country buyer lists and coverage tiles | ✅ |
 | **Buyer CRM** — name, country, city, website, contact, email, phone, materials, notes | ✅ |
 | **LME price bar** pinned to the top (Copper, Aluminium, Zinc, Lead, Nickel) | ✅ |
+| **Live daily price scan** — auto-fetch from a provider (Metals-API / custom) | ✅ |
 | **EU aluminium duty-paid premium** shown next to the aluminium price | ✅ |
 | **"Send email"** → opens Gmail with a **pre-written** message (products + today's prices) | ✅ |
 | **Traffic-light status** 🔴 not contacted · 🟡 awaiting reply · 🟢 replied | ✅ |
@@ -185,28 +186,54 @@ running the proxy in `MOCK=1` to see the sync flow.
 
 ---
 
-## 💱 Prices
+## 💱 Prices (live, scanned daily)
 
-Click **Update prices** to enter today's LME settlement values and the **EU duty-paid aluminium
-premium** (reference: the [LME aluminium premium page](https://www.lme.com/metals/non-ferrous/lme-aluminium-premiums/lme-aluminium-premium-duty-paid-european-fastmarkets-mb)).
-They show on the price bar and are embedded into every email draft.
+The board at the **top of every page** shows LME Copper, Aluminium (+ EU duty-paid premium), Zinc,
+Lead and Nickel, and is embedded into every email draft. You can always click **Update prices** to
+enter values by hand, but the app can also **scan a price provider once a day automatically**.
 
-### Optional: automatic live prices
-LME/SMM data is **licensed** and their sites **block direct browser requests (CORS)**, so live
-auto-pricing needs a tiny endpoint you control. Once you have one returning JSON like:
+### Why a provider (and why "delayed")
+LME's own data feed is licensed (~$2,490/yr) and SMM is paid too — there's **no free official
+real-time feed**, and the premium webpage can't be reliably or legally scraped. So the proxy pulls
+from a provider **you** choose and normalizes everything to **USD/tonne**. Most affordable feeds are
+**delayed/indicative** — fine for outreach, but confirm the exact number at contract.
 
+### Setup (Metals-API example — has a free tier)
+1. Get a key at metals-api.com (LME symbols: `LME-XCU`, `LME-ALU`, `LME-ZNC`, `LME-LEAD`, `LME-NI`).
+2. In the proxy `.env`:
+   ```bash
+   PRICE_PROVIDER=metals-api
+   PRICE_API_KEY=your_key
+   PRICE_BASE=USD
+   PRICE_REFRESH_HOURS=12      # daily-ish scan; cached so you don't burn quota
+   ```
+3. Restart the proxy. The app auto-scans on load (toggle in **Settings → Live prices**) and you can
+   hit **↻ Live now** anytime. The bar shows the source + "delayed/indicative" + last-updated.
+
+### Calibrating to match LME
+Providers differ in units (per-tonne vs per-lb) and quoting (some return `base/symbol`), so there
+are knobs to line the numbers up exactly — no code changes:
+```bash
+PRICE_INVERT=yes     # use 1/rate (default yes for metals-api)
+PRICE_UNIT=tonne     # tonne | lb | oz  (lb/oz auto-converted to per-tonne)
+PRICE_MULT=1         # final fine-tune multiplier
+```
+Sanity-check the first result against the LME site and adjust if needed.
+
+### Bring your own feed
+Prefer your own data source (or a licensed SMM/Fastmarkets feed)? Set `PRICE_PROVIDER=custom` and
+`PRICE_FEED_URL=` to any endpoint returning normalized JSON:
 ```json
-{ "copper": 9250, "aluminium": 2350, "premium": 295, "zinc": 2700, "lead": 2100, "nickel": 16500, "source": "LME", "asOf": 1730000000000 }
+{ "copper":9250, "aluminium":2350, "zinc":2700, "lead":2050, "nickel":16500,
+  "premium":290, "premiums":{"aluminium":290,"copper":120}, "source":"SMM", "asOf":1730000000000 }
 ```
 
-set it in the browser console or in `assets/js/data.js`:
-
-```js
-window.App.PRICE_FEED_URL = "https://your-endpoint.example.com/prices";
-```
-
-…then the **↻ Live** button on the price bar will pull from it. (A Cloudflare Worker or small
-serverless function that scrapes/forwards a data source you're licensed for works well here.)
+### EU premiums (aluminium + others)
+The aluminium **EU duty-paid premium** ([reference: LME premium page](https://www.lme.com/metals/non-ferrous/lme-aluminium-premiums/lme-aluminium-premium-duty-paid-european-fastmarkets-mb)) shows next to the aluminium price.
+Premiums are **licensed data** (Fastmarkets), so to automate them point `PREMIUM_FEED_URL` at a feed
+you're licensed for (or your own endpoint) returning `{ "aluminium":290, "copper":120, ... }` in
+USD/MT — any metals you include appear as extra chips on the bar. Otherwise enter the premium by
+hand under **Update prices**. (No key needed to try it: run the proxy with `MOCK=1`.)
 
 ---
 
@@ -217,7 +244,7 @@ serverless function that scrapes/forwards a data source you're licensed for work
 | **Real top-50 buyer lists + verified contacts** | An Apollo.io paid plan/API, or your own sourced list, imported via CSV. The app ships with a few clearly-labelled `[SAMPLE]` rows — delete them and import your real data. |
 | **Procurement/buyer contacts per company** | ✅ Built in via the Apollo proxy (see above). Emails/phones need the *Reveal* toggle (uses credits). |
 | **Auto "replied → green"** + status sync | ✅ Built in via Gmail read-only OAuth (see "Gmail auto-status"). |
-| **Live LME / SMM prices** | A licensed data feed exposed through a proxy endpoint (`PRICE_FEED_URL` above). |
+| **Live LME / SMM prices** | ✅ Built in via the proxy price adapter (Metals-API or your own feed; scanned daily). Official real-time LME/SMM still needs a licensed feed. |
 | **Multi-user / shared team data** | Swap `localStorage` for a hosted database (the `Store` module is the single integration point). |
 
 ---

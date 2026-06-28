@@ -40,25 +40,28 @@ window.App = window.App || {};
     },
 
     /* ------------------------------------------------------------
-       OPTIONAL live feed adapter.
-       LME / SMM data is licensed and most endpoints block browser
-       (CORS) requests, so this is left as a clearly-marked hook.
-       To enable: deploy a tiny proxy/backend that returns JSON like
-         { copper: 9000, aluminium: 2300, premium: 290, zinc: 2700,
-           lead: 2100, nickel: 16500, source: "...", asOf: 1700000000000 }
-       then set window.App.PRICE_FEED_URL to its address.
+       Live feed. Defaults to the local proxy's /api/prices endpoint
+       (which scans your configured provider daily), or override with
+       window.App.PRICE_FEED_URL. See server/apollo-proxy.js + README.
        ------------------------------------------------------------ */
-    fetchLive: function () {
-      var url = App.PRICE_FEED_URL;
-      if (!url) {
-        return Promise.reject(new Error(
-          "No live feed configured. Enter prices manually, or set App.PRICE_FEED_URL " +
-          "to a JSON endpoint you control (see README)."
-        ));
-      }
+    feedUrl: function () {
+      if (App.PRICE_FEED_URL) return App.PRICE_FEED_URL;
+      var base = (App.Store.settings().apolloProxyUrl || "http://localhost:8787").replace(/\/+$/, "");
+      return base + "/api/prices";
+    },
+
+    fetchLive: function (force) {
+      var url = this.feedUrl() + (force ? "?force=1" : "");
       return fetch(url).then(function (r) {
-        if (!r.ok) throw new Error("Feed responded " + r.status);
-        return r.json();
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error(j.error || ("Price feed responded " + r.status));
+          return j;
+        });
+      }).catch(function (err) {
+        if (err instanceof TypeError) {
+          throw new Error("Can't reach the price feed. Start the proxy and set PRICE_PROVIDER (see README).");
+        }
+        throw err;
       });
     }
   };

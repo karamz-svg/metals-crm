@@ -18,7 +18,8 @@ window.App = window.App || {};
     signature: "",              // optional extra signature lines
     apolloProxyUrl: "http://localhost:8787",  // address of your local Apollo proxy
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
-    revealPhone: false          // if true, also request phone numbers (async; needs public proxy)
+    revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
+    autoScanPrices: true        // auto-fetch live prices daily on app load (needs a price provider)
   };
 
   // LME prices are entered manually (or via the optional live adapter).
@@ -28,6 +29,8 @@ window.App = window.App || {};
     unit: "per MT",
     updatedAt: null,
     source: "Manual entry",
+    delayed: false,
+    premiums: {},
     rows: {
       copper:    { value: null },
       aluminium: { value: null, premium: null },
@@ -218,6 +221,24 @@ window.App = window.App || {};
     setPriceRow: function (key, partial) {
       var p = load().prices;
       p.rows[key] = Object.assign({}, p.rows[key], partial);
+      p.updatedAt = Date.now();
+      save();
+    },
+
+    // Apply a normalized feed result from the proxy /api/prices endpoint.
+    applyPriceFeed: function (d) {
+      if (!d) return;
+      var p = load().prices;
+      ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (k) {
+        if (d[k] != null && !isNaN(d[k])) p.rows[k] = Object.assign({}, p.rows[k], { value: Number(d[k]) });
+      });
+      if (d.premium != null && !isNaN(d.premium)) {
+        p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(d.premium) });
+      }
+      if (d.premiums && typeof d.premiums === "object") p.premiums = d.premiums;
+      if (d.currency) p.currency = d.currency;
+      p.delayed = !!d.delayed;
+      p.source = d.source || "Live feed";
       p.updatedAt = Date.now();
       save();
     },

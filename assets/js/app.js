@@ -54,12 +54,26 @@ window.App = window.App || {};
       }
     });
 
+    // Extra premiums for other metals (from a premium feed), shown after the metals.
+    var prem = p.premiums || {};
+    Object.keys(prem).forEach(function (k) {
+      if (k === "aluminium") return; // already shown next to aluminium
+      if (prem[k] == null || isNaN(prem[k])) return;
+      var label = (App.METALS[k] && App.METALS[k].label) || k;
+      chips += '<div class="chip premium">' +
+        '<span class="k">↳ ' + esc(label) + " premium</span>" +
+        '<span class="v">+' + Prices.fmt(prem[k]) + ' <small>' + esc(p.currency) + "/MT</small></span></div>";
+    });
+
+    var liveLabel = (Store.settings().autoScanPrices !== false) ? " · auto-scan daily" : "";
+    var delayed = p.delayed ? " · delayed/indicative" : "";
+
     $("pricebar").innerHTML =
       '<span class="pb-title">LME&nbsp;Board</span>' +
       '<div class="ticker">' + chips + "</div>" +
       '<div class="pb-meta">' +
-        "<span>" + esc(p.source) + " · " + esc(Prices.ageText(p.updatedAt)) + "</span>" +
-        '<button class="btn sm" data-action="refresh-prices">↻ Live</button>' +
+        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" +
+        '<button class="btn sm" data-action="refresh-prices">↻ Live now</button>' +
         '<button class="btn sm primary" data-action="edit-prices">Update prices</button>' +
       "</div>";
   }
@@ -315,7 +329,7 @@ window.App = window.App || {};
         '<div class="field"><label>Extra signature lines (optional)</label><textarea data-set="signature" placeholder="Address, registration no., etc.">' + esc(s.signature || "") + "</textarea></div>" +
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button></div>' +
       "</div>" +
-      '<div class="notice warn" style="max-width:640px;margin-top:16px;">⚠️ Status is updated by you for now (one click). Automatic “replied → green” detection needs the Gmail API + a small backend — see the README for the upgrade path.</div>' +
+      '<div class="notice warn" style="max-width:640px;margin-top:16px;">💡 Statuses can be set manually (click a light) or synced automatically from Gmail (below). Sending always goes through the review-first Gmail compose button.</div>' +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>👥 Apollo.io contact finder</h3>' +
         '<div class="meta">Your Apollo key lives only in the proxy\'s <span class="kbd">.env</span> file — never in the browser or GitHub. Start it with <span class="kbd">node server/apollo-proxy.js</span> (see README).</div>' +
         '<div class="field" style="margin-top:10px;"><label>Apollo proxy URL</label><input data-set="apolloProxyUrl" value="' + esc(s.apolloProxyUrl || "") + '" placeholder="http://localhost:8787"/></div>' +
@@ -331,6 +345,15 @@ window.App = window.App || {};
           '<button class="btn primary" data-action="connect-gmail">Connect Gmail</button>' +
           '<button class="btn" data-action="sync-gmail">📥 Sync now</button>' +
         "</div></div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>💱 Live prices</h3>' +
+        '<div class="meta">Prices show on the bar at the top of every page and feed into each email. ' +
+        'Choose a provider in the proxy\'s <span class="kbd">.env</span> (<span class="kbd">PRICE_PROVIDER</span>, e.g. metals-api + key) — see README. ' +
+        'You can always enter prices manually via <strong>Update prices</strong> on the bar.</div>' +
+        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + "</div>" +
+        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
+        '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
+          '<button class="btn" data-action="refresh-prices">↻ Fetch prices now</button></div>' +
+      "</div>" +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>Data</h3>' +
         '<div class="meta">Back up or move your buyer list between devices.</div>' +
         '<div class="btn-row" style="margin-top:10px;">' +
@@ -677,14 +700,11 @@ window.App = window.App || {};
         break;
       }
       case "refresh-prices":
-        toast("Fetching live feed…");
-        Prices.fetchLive().then(function (d) {
-          ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (k) {
-            if (d[k] != null) Store.setPriceRow(k, { value: Number(d[k]) });
-          });
-          if (d.premium != null) Store.setPriceRow("aluminium", { premium: Number(d.premium) });
-          Store.updatePrices({ source: d.source || "Live feed" });
-          render(); toast("Live prices loaded.");
+        toast("Scanning live prices…");
+        Prices.fetchLive(true).then(function (d) {
+          Store.applyPriceFeed(d);
+          render();
+          toast("Live prices loaded (" + (d.source || "feed") + ").");
         }).catch(function (err) {
           toast(err.message);
         });
@@ -814,8 +834,24 @@ window.App = window.App || {};
     }
   };
 
+  /* Auto-scan live prices ~once/day on load (if a provider is configured).
+     Silent: no error toast when there's no feed/proxy. */
+  function autoScanPrices() {
+    if (Store.settings().autoScanPrices === false) return;
+    var p = Store.prices();
+    var age = Date.now() - (p.updatedAt || 0);
+    if (p.updatedAt && age < 12 * 3600 * 1000) return; // already fresh today
+    Prices.fetchLive().then(function (d) {
+      if (d && (d.copper != null || d.aluminium != null || d.zinc != null)) {
+        Store.applyPriceFeed(d);
+        renderPriceBar();
+      }
+    }).catch(function () { /* silent — no provider/proxy configured yet */ });
+  }
+
   /* boot */
-  document.addEventListener("DOMContentLoaded", render);
-  if (document.readyState !== "loading") render();
+  function boot() { render(); setTimeout(autoScanPrices, 700); }
+  document.addEventListener("DOMContentLoaded", boot);
+  if (document.readyState !== "loading") boot();
 
 })(window.App);
