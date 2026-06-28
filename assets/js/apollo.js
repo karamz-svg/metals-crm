@@ -57,6 +57,26 @@ window.App = window.App || {};
         .then(function (r) { return r.json(); })
         .then(function (j) { return j.phones || {}; })
         .catch(function () { return {}; });
+    },
+
+    /* Discover real companies for a country via Apollo org search. */
+    findCompanies: function (countryName, page) {
+      var payload = { country: countryName, perPage: 25, page: page || 1 };
+      return fetch(this.proxyUrl() + "/api/find-companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error(j.error || ("Proxy responded " + r.status));
+          return j;
+        });
+      }).catch(function (err) {
+        if (err instanceof TypeError) {
+          throw new Error("Can't reach the Apollo proxy at " + Apollo.proxyUrl() + ". Start it (see README).");
+        }
+        throw err;
+      });
     }
   };
 

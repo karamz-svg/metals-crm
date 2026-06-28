@@ -20,6 +20,9 @@ window.App = window.App || {};
   }
   function $(id) { return document.getElementById(id); }
   function metal(id) { return App.METALS[id] || { label: id, color: "#888" }; }
+  function opt(value, label, current) {
+    return '<option value="' + esc(value) + '"' + (current === value ? " selected" : "") + ">" + esc(label) + "</option>";
+  }
 
   function toast(msg) {
     var root = $("toast-root");
@@ -67,12 +70,15 @@ window.App = window.App || {};
 
     var liveLabel = (Store.settings().autoScanPrices !== false) ? " · auto-scan daily" : "";
     var delayed = p.delayed ? " · delayed/indicative" : "";
+    var warn = App.priceMsg
+      ? ' <span class="price-warn" data-nav="settings" title="Open price settings">⚠️ ' + esc(App.priceMsg) + " — Set up</span>"
+      : (!p.updatedAt ? ' <span class="price-warn" data-nav="settings">⚠️ Live prices not set up — Set up</span>' : "");
 
     $("pricebar").innerHTML =
       '<span class="pb-title">LME&nbsp;Board</span>' +
       '<div class="ticker">' + chips + "</div>" +
       '<div class="pb-meta">' +
-        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" +
+        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" + warn +
         '<button class="btn sm" data-action="refresh-prices">↻ Live now</button>' +
         '<button class="btn sm primary" data-action="edit-prices">Update prices</button>' +
       "</div>";
@@ -94,17 +100,28 @@ window.App = window.App || {};
     var top =
       item("dashboard", null, "📊", "Dashboard") +
       item("companies", null, "🏢", "All buyers", companies.length) +
+      item("sheet", null, "📝", "Custom sheet", Store.sheetRows().length || null) +
       item("products", null, "🪙", "Products", App.PRODUCTS.length) +
       item("settings", null, "⚙️", "Settings");
 
-    var countryItems = App.COUNTRIES.map(function (c) {
-      var n = companies.filter(function (x) { return x.country === c.code; }).length;
-      return item("country", c.code, c.flag, c.name, n);
-    }).join("");
+    function countWith(code) { return companies.filter(function (x) { return x.country === code; }).length; }
+
+    // EU countries: only show those that actually have buyers (hide empty ones).
+    var euActive = App.COUNTRIES.filter(function (c) { return countWith(c.code) > 0; });
+    var euItems = euActive.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
+    var euSection = euActive.length
+      ? '<div class="nav-section"><div class="label">EU Countries (' + euActive.length + ")</div>" + euItems + "</div>"
+      : "";
+
+    // My countries: always show every custom country the user added.
+    var custom = Store.customCountries();
+    var customItems = custom.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
+    var mySection = '<div class="nav-section"><div class="label">My countries</div>' + customItems +
+      '<div class="nav-item" data-action="add-country"><span>＋</span><span>Add country</span></div></div>';
 
     $("nav").innerHTML =
       '<div class="nav-section">' + top + "</div>" +
-      '<div class="nav-section"><div class="label">EU Countries (27)</div>' + countryItems + "</div>";
+      euSection + mySection;
   }
 
   /* =========================================================
@@ -116,6 +133,7 @@ window.App = window.App || {};
     var c = $("content");
     if (route.view === "dashboard") c.innerHTML = viewDashboard();
     else if (route.view === "products") c.innerHTML = viewProducts();
+    else if (route.view === "sheet") c.innerHTML = viewSheet();
     else if (route.view === "settings") c.innerHTML = viewSettings();
     else if (route.view === "companies") c.innerHTML = viewCompanies(null);
     else if (route.view === "country") c.innerHTML = viewCompanies(route.country);
@@ -138,7 +156,10 @@ window.App = window.App || {};
         withReply.map(function (c) { return esc(c.name); }).join(", ") + "</div>"
       : "";
 
-    var tiles = App.COUNTRIES.map(function (c) {
+    // Only countries that have buyers (active EU) plus all custom countries.
+    var euActive = App.COUNTRIES.filter(function (c) { return Store.companiesByCountry(c.code).length > 0; });
+    var tileCountries = euActive.concat(Store.customCountries());
+    var tiles = tileCountries.map(function (c) {
       var list = Store.companiesByCountry(c.code);
       var dots = ["red", "yellow", "green"].map(function (st) {
         var n = list.filter(function (x) { return x.status === st; }).length;
@@ -194,6 +215,40 @@ window.App = window.App || {};
       '<div class="grid cards">' + html + "</div>";
   }
 
+  /* ---- Custom sheet (free-form, Excel-style) ---- */
+  function viewSheet() {
+    var rows = Store.sheetRows();
+    var prodOpts = App.PRODUCTS.map(function (p) { return '<option value="' + esc(p.name) + '">'; }).join("");
+
+    function row(r) {
+      var csel = '<select onchange="App.onSheetEdit(\'' + r.id + '\',\'country\',this.value)">' +
+        '<option value=""' + (!r.country ? " selected" : "") + ">—</option>" +
+        App.allCountries().map(function (x) {
+          return '<option value="' + x.code + '"' + (r.country === x.code ? " selected" : "") + ">" + x.flag + " " + esc(x.name) + "</option>";
+        }).join("") + "</select>";
+      return "<tr>" +
+        '<td><input list="sheet-prod" value="' + esc(r.product) + '" placeholder="product" onchange="App.onSheetEdit(\'' + r.id + '\',\'product\',this.value)"/></td>' +
+        "<td>" + csel + "</td>" +
+        '<td><input value="' + esc(r.material) + '" placeholder="material" onchange="App.onSheetEdit(\'' + r.id + '\',\'material\',this.value)"/></td>' +
+        '<td><input value="' + esc(r.qty) + '" placeholder="qty / MT" onchange="App.onSheetEdit(\'' + r.id + '\',\'qty\',this.value)"/></td>' +
+        '<td><input value="' + esc(r.notes) + '" placeholder="notes" onchange="App.onSheetEdit(\'' + r.id + '\',\'notes\',this.value)"/></td>' +
+        '<td><button class="btn sm danger" data-action="sheet-del" data-id="' + r.id + '">🗑</button></td>' +
+        "</tr>";
+    }
+
+    var body = rows.length
+      ? '<table class="sheet"><thead><tr><th>Product</th><th>Country</th><th>Material</th><th>Qty</th><th>Notes</th><th></th></tr></thead><tbody>' +
+        rows.map(row).join("") + "</tbody></table>"
+      : '<div class="empty"><div class="big">📝</div><p>Empty sheet — add your first row.</p></div>';
+
+    return '<datalist id="sheet-prod">' + prodOpts + "</datalist>" +
+      '<div class="page-head"><div><h2>Custom Sheet</h2>' +
+      '<div class="sub">A free-form tab — log any product, country and material combination, like an extra Excel sheet. Saved automatically.</div></div>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn primary" data-action="sheet-add">+ Add row</button></div>' +
+      body;
+  }
+
   /* ---- Companies (all or by country) ---- */
   function viewCompanies(countryCode) {
     var list = countryCode ? Store.companiesByCountry(countryCode) : Store.companies();
@@ -219,9 +274,12 @@ window.App = window.App || {};
       '<div class="spacer"></div>' +
       '<input class="search" placeholder="Search name, email, city…" value="' + esc(query) + '" oninput="App.onSearch(this.value)"/>' +
       '<button class="btn" data-action="bulk-find"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>👥 Find buyers (all)</button>' +
+      (countryCode ? '<button class="btn" data-action="discover-companies" data-country="' + countryCode + '">🔎 Discover companies</button>' : "") +
       '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn" data-action="import">⇪ Import CSV</button>' +
       '<button class="btn" data-action="export">⇩ Export</button>' +
+      ((countryCode && App.countryByCode(countryCode) && App.countryByCode(countryCode).custom)
+        ? '<button class="btn danger" data-action="remove-country" data-country="' + countryCode + '">🗑 Remove country</button>' : "") +
       '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>';
 
     var legend = '<div class="legend" style="margin-bottom:14px;">' +
@@ -358,10 +416,25 @@ window.App = window.App || {};
         "</div></div>" +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>💱 Live prices</h3>' +
         '<div class="meta">Prices show on the bar at the top of every page and feed into each email. ' +
-        'Choose a provider in the proxy\'s <span class="kbd">.env</span> (<span class="kbd">PRICE_PROVIDER</span>, e.g. metals-api + key) — see README. ' +
-        'You can always enter prices manually via <strong>Update prices</strong> on the bar.</div>' +
-        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + "</div>" +
-        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
+        'Pick where they come from — for the hosted site use <strong>Metals-API (direct)</strong> with a free key, ' +
+        'since the local proxy isn\'t reachable from https.</div>' +
+        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + (App.priceMsg ? ' · <span style="color:var(--yellow)">' + esc(App.priceMsg) + "</span>" : "") + "</div>" +
+        '<div class="field" style="margin-top:10px;"><label>Price source</label><select data-set="priceSource">' +
+          opt("metalsapi", "Metals-API (direct, needs key) — works on hosted site", s.priceSource) +
+          opt("custom", "Custom URL (any CORS JSON feed)", s.priceSource) +
+          opt("proxy", "Local proxy /api/prices (needs the Node proxy running)", s.priceSource) +
+          opt("manual", "Manual only (no auto-fetch)", s.priceSource) +
+        "</select></div>" +
+        '<div class="field"><label>Metals-API key (for the direct source — free at metals-api.com)</label><input data-set="priceApiKey" value="' + esc(s.priceApiKey || "") + '" placeholder="your access_key"/></div>' +
+        '<div class="field"><label>Custom price URL (for the Custom source)</label><input data-set="priceCustomUrl" value="' + esc(s.priceCustomUrl || "") + '" placeholder="https://…/prices (returns normalized JSON)"/></div>' +
+        '<div class="field-2">' +
+          '<div class="field"><label>Calibrate: unit</label><select data-set="priceUnit">' +
+            opt("tonne", "per tonne", s.priceUnit) + opt("lb", "per lb (×2204.62)", s.priceUnit) + opt("oz", "per oz", s.priceUnit) +
+          "</select></div>" +
+          '<div class="field"><label>Calibrate: multiplier (if numbers look off)</label><input data-set="priceMult" value="' + esc(s.priceMult != null ? s.priceMult : 1) + '" placeholder="1"/></div>' +
+        "</div>" +
+        '<label class="check" style="margin:4px 0 12px;"><input type="checkbox" data-set-bool="priceInvert"' + (s.priceInvert !== false ? " checked" : "") + '> Invert rate (1/rate) — keep on for Metals-API</label>' +
+        '<label class="check" style="margin:0 0 12px;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
           '<button class="btn" data-action="refresh-prices">↻ Fetch prices now</button></div>' +
       "</div>" +
@@ -400,7 +473,7 @@ window.App = window.App || {};
   function companyForm(c) {
     c = c || {};
     var isEdit = !!c.id;
-    var countryOpts = App.COUNTRIES.map(function (x) {
+    var countryOpts = App.allCountries().map(function (x) {
       return '<option value="' + x.code + '"' + (c.country === x.code ? " selected" : "") + ">" + x.flag + " " + esc(x.name) + "</option>";
     }).join("");
     var checks = App.PRODUCTS.map(function (p) {
@@ -432,6 +505,18 @@ window.App = window.App || {};
       '<button class="btn primary" data-action="save-company" data-id="' + (c.id || "") + '">' + (isEdit ? "Save changes" : "Add buyer") + "</button>";
 
     openModal(isEdit ? "Edit buyer" : "Add buyer", body, footer);
+  }
+
+  function countryForm() {
+    var body =
+      '<div class="meta" style="margin-bottom:12px;">Add a market that isn\'t in the EU list (e.g. UK, Turkey, USA, UAE). It appears under <strong>My countries</strong> and in the buyer form.</div>' +
+      '<div class="field-2">' +
+        '<div class="field"><label>Country name</label><input data-cf="name" placeholder="e.g. Türkiye"/></div>' +
+        '<div class="field"><label>Flag emoji (optional)</label><input data-cf="flag" placeholder="🇹🇷" maxlength="4"/></div>' +
+      "</div>";
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      '<button class="btn primary" data-action="save-country">Add country</button>';
+    openModal("Add a country", body, footer);
   }
 
   function pricesForm() {
@@ -496,6 +581,28 @@ window.App = window.App || {};
     var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
       (people.length ? '<button class="btn primary" data-action="save-selected-people" data-id="' + company.id + '">Add selected</button>' : "");
     openModal("👥 Buyers at " + company.name, body, footer);
+  }
+
+  function openCompanyPicker(countryCode, res) {
+    var country = App.countryByCode(countryCode);
+    var companies = res.companies || [];
+    var mockNote = res.mock
+      ? '<div class="notice warn">Proxy is in <strong>MOCK mode</strong> — these are samples. Set APOLLO_API_KEY for real company discovery.</div>'
+      : "";
+    var rows = companies.length ? companies.map(function (c) {
+      var enc = encodeURIComponent(JSON.stringify(c));
+      return '<label class="pick"><input type="checkbox" data-company="' + enc + '" ' + (c.domain ? "checked" : "") + ">" +
+        '<div><div class="pick-name">' + esc(c.name || "—") + "</div>" +
+        '<div class="pick-contact">' + (c.domain ? "🌐 " + esc(c.domain) : "no website") + (c.city ? " · " + esc(c.city) : "") + "</div></div></label>";
+    }).join("") : '<div class="empty"><div class="big">🔍</div><p>No companies returned. Try again or adjust Apollo filters.</p></div>';
+
+    var body = mockNote +
+      '<div class="meta" style="margin-bottom:10px;">Found ' + companies.length + " real companies in <strong>" + esc(country ? country.name : countryCode) +
+      "</strong>. Add the ones you want, then run <strong>Find buyers (all)</strong> to pull verified emails.</div>" +
+      '<div class="pick-list">' + rows + "</div>";
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      (companies.length ? '<button class="btn primary" data-action="save-discovered" data-country="' + countryCode + '">Add selected</button>' : "");
+    openModal("🔎 Discover companies — " + (country ? country.name : countryCode), body, footer);
   }
 
   /* Bulk: find buyers for every company (optionally in one country) with a
@@ -669,6 +776,31 @@ window.App = window.App || {};
       case "add-company":
         companyForm({ country: a.getAttribute("data-country") || (route.country || "DE") });
         break;
+
+      case "add-country": countryForm(); break;
+      case "save-country": {
+        var cm = a.closest(".modal");
+        var nm = cm.querySelector("[data-cf=name]").value.trim();
+        var fl = cm.querySelector("[data-cf=flag]").value.trim();
+        if (!nm) { toast("Enter a country name."); break; }
+        var nc = Store.addCustomCountry(nm, fl);
+        closeModal();
+        route = { view: "country", country: nc.code };
+        render(); toast("Added " + nc.name + " — add buyers to it now.");
+        break;
+      }
+      case "remove-country": {
+        var rc = App.countryByCode(a.getAttribute("data-country"));
+        if (rc && confirm("Remove " + rc.name + " and its buyers from the app?")) {
+          Store.removeCustomCountry(rc.code);
+          route = { view: "dashboard", country: null };
+          render(); toast(rc.name + " removed.");
+        }
+        break;
+      }
+
+      case "sheet-add": Store.addSheetRow(); render(); break;
+      case "sheet-del": Store.deleteSheetRow(id); render(); break;
       case "edit-company": companyForm(company); break;
 
       case "save-company": {
@@ -731,10 +863,12 @@ window.App = window.App || {};
       case "refresh-prices":
         toast("Scanning live prices…");
         Prices.fetchLive(true).then(function (d) {
+          App.priceMsg = "";
           Store.applyPriceFeed(d);
           render();
           toast("Live prices loaded (" + (d.source || "feed") + ").");
         }).catch(function (err) {
+          App.priceMsg = err.message; renderPriceBar();
           toast(err.message);
         });
         break;
@@ -821,6 +955,33 @@ window.App = window.App || {};
         break;
       }
 
+      case "discover-companies": {
+        var cc = a.getAttribute("data-country");
+        var country = App.countryByCode(cc);
+        a.textContent = "⏳ Searching…"; a.setAttribute("disabled", "1");
+        App.Apollo.findCompanies(country ? country.name : cc).then(function (res) {
+          openCompanyPicker(cc, res);
+        }).catch(function (err) { toast(err.message); }).then(function () { render(); });
+        break;
+      }
+
+      case "save-discovered": {
+        var dm = a.closest(".modal");
+        var dcc = a.getAttribute("data-country");
+        var chosen = [];
+        dm.querySelectorAll("[data-company]:checked").forEach(function (el) {
+          chosen.push(JSON.parse(decodeURIComponent(el.getAttribute("data-company"))));
+        });
+        if (!chosen.length) { toast("Select at least one company."); break; }
+        var seed = chosen.map(function (x) {
+          return { name: x.name, country: dcc, city: x.city || "", website: x.domain || "", materials: [], notes: "Discovered via Apollo — run Find buyers for contacts." };
+        });
+        var n = Store.importSeed(seed);
+        closeModal(); render();
+        toast(n + " companies added — now run “Find buyers (all)” to get emails.");
+        break;
+      }
+
       case "connect-gmail":
         window.open(App.Gmail.connectUrl(), "_blank");
         toast("Connect Gmail in the new tab, then click “Sync now”.");
@@ -884,6 +1045,11 @@ window.App = window.App || {};
     }
   });
 
+  App.onSheetEdit = function (id, field, value) {
+    var patch = {}; patch[field] = value;
+    App.Store.updateSheetRow(id, patch);
+  };
+
   App.onSearch = function (v) { query = v; var c = $("content");
     // re-render only the cards area to keep input focus
     if (route.view === "companies" || route.view === "country") {
@@ -893,19 +1059,24 @@ window.App = window.App || {};
     }
   };
 
-  /* Auto-scan live prices ~once/day on load (if a provider is configured).
-     Silent: no error toast when there's no feed/proxy. */
+  /* Auto-scan live prices ~once/day on load (if a source is configured).
+     Surfaces the reason in the price bar if it can't (instead of silent). */
   function autoScanPrices() {
     if (Store.settings().autoScanPrices === false) return;
+    if (Store.settings().priceSource === "manual") return;
     var p = Store.prices();
     var age = Date.now() - (p.updatedAt || 0);
     if (p.updatedAt && age < 12 * 3600 * 1000) return; // already fresh today
+    App.priceMsg = "scanning…"; renderPriceBar();
     Prices.fetchLive().then(function (d) {
       if (d && (d.copper != null || d.aluminium != null || d.zinc != null)) {
-        Store.applyPriceFeed(d);
-        renderPriceBar();
+        App.priceMsg = ""; Store.applyPriceFeed(d); renderPriceBar();
+      } else {
+        App.priceMsg = "Live feed returned no prices."; renderPriceBar();
       }
-    }).catch(function () { /* silent — no provider/proxy configured yet */ });
+    }).catch(function (err) {
+      App.priceMsg = err.message; renderPriceBar();
+    });
   }
 
   /* boot */

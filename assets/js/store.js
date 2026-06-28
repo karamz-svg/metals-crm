@@ -20,6 +20,12 @@ window.App = window.App || {};
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
     revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
     autoScanPrices: true,       // auto-fetch live prices daily on app load (needs a price provider)
+    priceSource: "metalsapi",   // metalsapi | custom | proxy | manual
+    priceApiKey: "",            // Metals-API key (price-only; for direct browser fetch)
+    priceCustomUrl: "",         // any CORS JSON endpoint returning normalized prices
+    priceInvert: true,          // Metals-API returns base/symbol -> use 1/rate
+    priceUnit: "tonne",         // tonne | lb | oz (converted to per-tonne)
+    priceMult: 1,               // final calibration multiplier
     teamSync: false,            // share data with teammates via the proxy /api/data
     syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
     syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
@@ -85,7 +91,9 @@ window.App = window.App || {};
       version: 1,
       settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
       prices: JSON.parse(JSON.stringify(DEFAULT_PRICES)),
-      companies: companies
+      companies: companies,
+      customCountries: [],
+      sheet: []
     };
   }
 
@@ -101,6 +109,8 @@ window.App = window.App || {};
       if (!Array.isArray(c.people)) c.people = [];
       c.people.forEach(function (p) { if (!p.status) p.status = "red"; });
     });
+    if (!Array.isArray(s.customCountries)) s.customCountries = [];
+    if (!Array.isArray(s.sheet)) s.sheet = [];
     if (typeof s.rev !== "number") s.rev = 0;
     return s;
   }
@@ -320,6 +330,36 @@ window.App = window.App || {};
     resetAll: function () {
       state = freshState();
       save();
+    },
+
+    /* ---------- Custom countries ---------- */
+    customCountries: function () { var s = load(); if (!s.customCountries) s.customCountries = []; return s.customCountries; },
+    addCustomCountry: function (name, flag) {
+      var s = load(); if (!s.customCountries) s.customCountries = [];
+      var code = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4);
+      var c = { code: code, name: (name || "New country").trim(), flag: (flag || "🌍").trim() || "🌍", custom: true };
+      s.customCountries.push(c); save(); return c;
+    },
+    removeCustomCountry: function (code) {
+      var s = load();
+      s.customCountries = (s.customCountries || []).filter(function (c) { return c.code !== code; });
+      s.companies = s.companies.filter(function (c) { return c.country !== code; });
+      save();
+    },
+
+    /* ---------- Custom sheet ---------- */
+    sheetRows: function () { var s = load(); if (!s.sheet) s.sheet = []; return s.sheet; },
+    addSheetRow: function (data) {
+      var s = load(); if (!s.sheet) s.sheet = [];
+      var r = Object.assign({ id: uid(), product: "", country: "", material: "", qty: "", notes: "" }, data || {});
+      s.sheet.push(r); save(); return r;
+    },
+    updateSheetRow: function (id, patch) {
+      var r = (load().sheet || []).find(function (x) { return x.id === id; });
+      if (r) { Object.assign(r, patch); save(); }
+    },
+    deleteSheetRow: function (id) {
+      var s = load(); s.sheet = (s.sheet || []).filter(function (x) { return x.id !== id; }); save();
     },
 
     /* ---------- Team sync hooks ---------- */

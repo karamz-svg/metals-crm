@@ -85,6 +85,8 @@ a:hover { text-decoration: underline; }
 .chip.premium { border-color: #4a6; }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .pb-meta { color: var(--muted); font-size: 11.5px; display: flex; align-items: center; gap: 10px; }
+.price-warn { color: var(--yellow); cursor: pointer; text-decoration: underline dotted; }
+.price-warn:hover { color: #ffd35c; }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -256,3 +258,17 @@ a:hover { text-decoration: underline; }
 .pick-name small { color: var(--muted); font-weight: 500; font-size: 11px; }
 .pick-title { color: var(--text); font-size: 12.5px; }
 .pick-contact { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+
+/* ---------- Custom sheet (Excel-style table) ---------- */
+table.sheet { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+table.sheet th { text-align: left; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 10px 10px; background: var(--bg-2); border-bottom: 1px solid var(--line); }
+table.sheet td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+table.sheet tr:last-child td { border-bottom: none; }
+table.sheet input, table.sheet select {
+  width: 100%; background: transparent; border: 1px solid transparent; color: var(--text);
+  border-radius: 7px; padding: 7px 8px; font: inherit; font-size: 13px;
+}
+table.sheet input:hover, table.sheet select:hover { border-color: var(--line); }
+table.sheet input:focus, table.sheet select:focus { outline: none; border-color: var(--accent-2); background: var(--bg-2); }
+table.sheet td:last-child { width: 44px; text-align: center; }

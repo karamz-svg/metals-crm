@@ -452,6 +452,43 @@ if (PRICE_PROVIDER && PRICE_PROVIDER !== "mock") {
   if (t.unref) t.unref();
 }
 
+/* ---------------- Company discovery (Apollo org search) ----------------
+   Finds REAL companies per country/industry so you can build a buyer list
+   without inventing anything. Pair with /api/find-buyers to get emails. */
+async function findCompanies(opts) {
+  const perPage = Math.min(Number(opts.perPage || 25), 25);
+  if (MOCK) return mockCompanies(opts, perPage);
+  if (!API_KEY) throw new Error("APOLLO_API_KEY is not set on the proxy.");
+  const body = {
+    q_organization_keyword_tags: (opts.keywords && opts.keywords.length) ? opts.keywords : ["non-ferrous metals", "metals", "aluminium", "copper", "metal recycling"],
+    page: Number(opts.page || 1),
+    per_page: perPage
+  };
+  if (opts.country) body.organization_locations = [opts.country];
+  const r = await apollo("/mixed_companies/search", body);
+  const orgs = r.organizations || r.accounts || [];
+  return {
+    companies: orgs.slice(0, perPage).map(function (o) {
+      return {
+        name: o.name || "",
+        domain: cleanDomain(o.primary_domain || o.website_url || ""),
+        city: o.organization_city || o.city || "",
+        linkedin: o.linkedin_url || ""
+      };
+    }),
+    total: (r.pagination && r.pagination.total_entries) || orgs.length
+  };
+}
+function mockCompanies(opts, perPage) {
+  const loc = opts.country || "the EU";
+  const base = [
+    { name: "[MOCK] " + loc + " Copper Works", domain: "example-copper.com", city: loc },
+    { name: "[MOCK] " + loc + " Aluminium Recycling", domain: "example-alu.com", city: loc },
+    { name: "[MOCK] " + loc + " Non-Ferrous Trading", domain: "example-nf.com", city: loc }
+  ];
+  return { companies: base.slice(0, perPage), total: base.length, mock: true };
+}
+
 /* ---------------- Team data store (optional) ----------------
    Shares the app's whole state between teammates. File-backed
    (.data-store.json, git-ignored), last-write-wins, with an
@@ -550,6 +587,16 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const result = await findBuyers(body);
+      return send(res, 200, result);
+    } catch (e) {
+      return send(res, e.status || 400, { error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && path === "/api/find-companies") {
+    try {
+      const body = await readBody(req);
+      const result = await findCompanies(body);
       return send(res, 200, result);
     } catch (e) {
       return send(res, e.status || 400, { error: e.message });

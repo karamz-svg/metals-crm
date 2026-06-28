@@ -85,7 +85,18 @@ window.App = window.App || {};
   ];
 
   App.countryByCode = function (code) {
-    return App.COUNTRIES.find(function (c) { return c.code === code; });
+    var c = App.COUNTRIES.find(function (x) { return x.code === code; });
+    if (c) return c;
+    if (App.Store && App.Store.customCountries) {
+      return App.Store.customCountries().find(function (x) { return x.code === code; });
+    }
+    return undefined;
+  };
+
+  // All selectable countries = the 27 EU members + any custom ones the user added.
+  App.allCountries = function () {
+    var custom = (App.Store && App.Store.customCountries) ? App.Store.customCountries() : [];
+    return App.COUNTRIES.concat(custom);
   };
 
   /* ---- LME price rows shown in the panel ---- */

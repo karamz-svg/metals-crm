@@ -40,17 +40,43 @@ window.App = window.App || {};
     },
 
     /* ------------------------------------------------------------
-       Live feed. Defaults to the local proxy's /api/prices endpoint
-       (which scans your configured provider daily), or override with
-       window.App.PRICE_FEED_URL. See server/apollo-proxy.js + README.
+       Live feed. The source is chosen in Settings → Live prices:
+         • "metalsapi" — fetch directly from Metals-API in the browser
+                         (works on the hosted site; needs a free key)
+         • "custom"    — any CORS-enabled URL returning normalized JSON
+         • "proxy"     — the local Node proxy's /api/prices (needs it running)
+       window.App.PRICE_FEED_URL still overrides everything.
        ------------------------------------------------------------ */
+    source: function () {
+      return (App.Store.settings().priceSource || "metalsapi");
+    },
+
     feedUrl: function () {
       if (App.PRICE_FEED_URL) return App.PRICE_FEED_URL;
       var base = (App.Store.settings().apolloProxyUrl || "http://localhost:8787").replace(/\/+$/, "");
       return base + "/api/prices";
     },
 
+    // Calibrate a raw provider rate to USD/tonne (provider units vary).
+    calibrate: function (raw) {
+      var s = App.Store.settings();
+      if (raw == null || isNaN(raw)) return null;
+      var v = Number(raw);
+      if (s.priceInvert !== false && v !== 0) v = 1 / v;   // metals-api returns base/symbol
+      var unitMult = s.priceUnit === "lb" ? 2204.62 : (s.priceUnit === "oz" ? 32150.7 : 1);
+      v = v * unitMult * (Number(s.priceMult) || 1);
+      return Math.round(v);
+    },
+
     fetchLive: function (force) {
+      var src = App.PRICE_FEED_URL ? "proxy" : this.source();
+      if (src === "manual") return Promise.reject(new Error("Live prices are set to Manual (Settings → Live prices)."));
+      if (src === "metalsapi") return this.fetchMetalsApiDirect();
+      if (src === "custom") return this.fetchCustomDirect();
+      return this.fetchProxy(force);
+    },
+
+    fetchProxy: function (force) {
       var url = this.feedUrl() + (force ? "?force=1" : "");
       return fetch(url).then(function (r) {
         return r.json().then(function (j) {
@@ -59,8 +85,55 @@ window.App = window.App || {};
         });
       }).catch(function (err) {
         if (err instanceof TypeError) {
-          throw new Error("Can't reach the price feed. Start the proxy and set PRICE_PROVIDER (see README).");
+          throw new Error("Can't reach the price proxy at " + Prices.feedUrl() + ". Is it running? (Or switch the price source to Metals-API in Settings.)");
         }
+        throw err;
+      });
+    },
+
+    // Direct browser call to Metals-API (CORS-enabled). Key lives in Settings.
+    fetchMetalsApiDirect: function () {
+      var s = App.Store.settings();
+      if (!s.priceApiKey) {
+        return Promise.reject(new Error("Add your Metals-API key in Settings → Live prices (free at metals-api.com)."));
+      }
+      var map = { copper: "LME-XCU", aluminium: "LME-ALU", zinc: "LME-ZNC", lead: "LME-LEAD", nickel: "LME-NI" };
+      var syms = Object.keys(map).map(function (k) { return map[k]; }).join(",");
+      var url = "https://metals-api.com/api/latest?access_key=" + encodeURIComponent(s.priceApiKey) +
+                "&base=USD&symbols=" + encodeURIComponent(syms);
+      return fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+        if (!j || j.success === false) {
+          throw new Error((j && j.error && (j.error.info || j.error.message)) || "Metals-API error (check your key/quota).");
+        }
+        var rates = j.rates || {};
+        var out = { currency: "USD", source: "Metals-API (LME, delayed)", asOf: Date.now(), delayed: true };
+        Object.keys(map).forEach(function (metal) {
+          var raw = rates[map[metal]];
+          if (raw == null) raw = rates["USD" + map[metal]];
+          out[metal] = Prices.calibrate(raw);
+        });
+        if (out.copper == null && out.aluminium == null) {
+          throw new Error("Metals-API returned no LME prices — your plan may not include LME symbols.");
+        }
+        return out;
+      }).catch(function (err) {
+        if (err instanceof TypeError) throw new Error("Couldn't reach Metals-API (network/CORS). Check your connection.");
+        throw err;
+      });
+    },
+
+    fetchCustomDirect: function () {
+      var s = App.Store.settings();
+      if (!s.priceCustomUrl) return Promise.reject(new Error("Set a Custom price URL in Settings → Live prices."));
+      return fetch(s.priceCustomUrl).then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error(j.error || ("Custom feed responded " + r.status));
+          j.asOf = j.asOf || Date.now();
+          j.source = j.source || "Custom feed";
+          return j;
+        });
+      }).catch(function (err) {
+        if (err instanceof TypeError) throw new Error("Couldn't reach the custom price URL (network/CORS).");
         throw err;
       });
     }
