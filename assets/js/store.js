@@ -232,6 +232,25 @@ window.App = window.App || {};
       state = Object.assign(freshState(), obj);
       save();
     },
+    // Load the bundled EU starter list (research leads), skipping any
+    // company that already exists (matched by name + country).
+    importSeed: function (seed) {
+      var existing = load().companies;
+      var added = 0;
+      (seed || []).forEach(function (s) {
+        var dup = existing.some(function (c) {
+          return (c.name || "").toLowerCase() === (s.name || "").toLowerCase() && c.country === s.country;
+        });
+        if (dup) return;
+        Store.addCompany({
+          name: s.name, country: s.country, city: s.city || "", website: s.website || "",
+          materials: (s.materials || []).slice(), notes: s.notes || ""
+        });
+        added++;
+      });
+      return added;
+    },
+
     // Bulk add companies from parsed CSV rows (objects keyed by header).
     importCompanyRows: function (rows) {
       var added = 0;

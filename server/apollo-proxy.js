@@ -28,6 +28,8 @@
 "use strict";
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
 const API_KEY = process.env.APOLLO_API_KEY || "";
 const PORT = Number(process.env.PORT || 8787);
@@ -39,6 +41,24 @@ const MOCK = process.env.MOCK === "1" || (!API_KEY && process.env.MOCK !== "0");
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || "").replace(/\/+$/, "");
 
 const APOLLO = "https://api.apollo.io/api/v1";
+
+/* ---------------- Gmail (optional) — auto-detect replies ----------------
+   Lets the app sync each buyer's traffic-light status from your inbox:
+   a reply from them -> green, you contacted them -> yellow.
+   Setup (one time) in Google Cloud Console:
+     1. Create an OAuth 2.0 Client ID (type: Web application).
+     2. Authorized redirect URI: <this proxy>/api/gmail/callback
+        (default http://localhost:8787/api/gmail/callback).
+     3. Enable the Gmail API; add yourself as a test user.
+     4. Put the client id/secret in .env (GOOGLE_CLIENT_ID / _SECRET).
+   Then click "Connect Gmail" in the app's Settings. Read-only scope. */
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || ("http://localhost:" + PORT + "/api/gmail/callback");
+const APP_RETURN_URL = process.env.APP_RETURN_URL || ""; // where to send the browser back after connecting
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const TOKEN_FILE = path.join(__dirname, "..", ".gmail-token.json");
+const HAS_GOOGLE = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 // In-memory store of phone numbers that arrive via the async webhook.
 // Keyed by lowercased "name"; also stored under "domain|name" when known.
@@ -88,6 +108,14 @@ function send(res, status, obj) {
     "Content-Length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function sendHtml(res, status, html) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Access-Control-Allow-Origin": ALLOW_ORIGIN
+  });
+  res.end(html);
 }
 
 function readBody(req) {
@@ -228,13 +256,141 @@ function mockBuyers(opts, titles) {
   return { people: sample.map((p) => mapPerson(p, null)), raw_count: sample.length, mock: true };
 }
 
+/* ---------------- Gmail helpers (optional) ---------------- */
+function loadToken() {
+  try { return JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8")); } catch (e) { return null; }
+}
+function saveToken(t) {
+  try { fs.writeFileSync(TOKEN_FILE, JSON.stringify(t, null, 2)); } catch (e) { console.error("[gmail] could not save token:", e.message); }
+}
+function gmailAuthUrl() {
+  const p = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: "code",
+    scope: GMAIL_SCOPE,
+    access_type: "offline",
+    include_granted_scopes: "true",
+    prompt: "consent"
+  });
+  return "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
+}
+async function googleToken(params) {
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString()
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error_description || j.error || "Google token error");
+  return j;
+}
+async function exchangeCode(code) {
+  const j = await googleToken({
+    code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+    redirect_uri: GOOGLE_REDIRECT_URI, grant_type: "authorization_code"
+  });
+  j.obtained_at = Date.now();
+  saveToken(j);
+  return j;
+}
+async function accessToken() {
+  let tok = loadToken();
+  if (!tok) throw new Error("Gmail not connected.");
+  const ageSec = (Date.now() - (tok.obtained_at || 0)) / 1000;
+  if (!tok.access_token || ageSec > (tok.expires_in || 3600) - 90) {
+    if (!tok.refresh_token) throw new Error("Gmail session expired — reconnect.");
+    const fresh = await googleToken({
+      client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: tok.refresh_token, grant_type: "refresh_token"
+    });
+    tok = Object.assign({}, tok, fresh, { obtained_at: Date.now() });
+    saveToken(tok);
+  }
+  return tok.access_token;
+}
+async function gmailGet(urlPath) {
+  const token = await accessToken();
+  const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me" + urlPath, {
+    headers: { Authorization: "Bearer " + token }
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || ("Gmail API " + r.status));
+  return j;
+}
+async function gmailProfileEmail() {
+  try { const p = await gmailGet("/profile"); return p.emailAddress || ""; } catch (e) { return ""; }
+}
+async function hasMessage(query) {
+  const j = await gmailGet("/messages?maxResults=1&q=" + encodeURIComponent(query));
+  return (j.resultSizeEstimate || 0) > 0 || (j.messages && j.messages.length > 0);
+}
+// For each buyer email: did they reply (from:) and did we contact them (to:)?
+async function gmailCheck(emails) {
+  const out = {};
+  for (const raw of emails) {
+    const e = (raw || "").trim();
+    if (!e) continue;
+    const key = e.toLowerCase();
+    if (!HAS_GOOGLE || !loadToken()) {
+      if (MOCK) { out[key] = { contacted: true, replied: (key.charCodeAt(0) % 2 === 0), mock: true }; continue; }
+      out[key] = { error: "Gmail not connected" }; continue;
+    }
+    try {
+      const replied = await hasMessage("from:" + e);
+      const contacted = await hasMessage("to:" + e);
+      out[key] = { replied: replied, contacted: contacted };
+    } catch (err) {
+      out[key] = { error: err.message };
+    }
+  }
+  return out;
+}
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, {});
   const path = req.url.split("?")[0];
 
   if (req.method === "GET" && path === "/health") {
-    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL });
+    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE });
+  }
+
+  // ---- Gmail OAuth + reply detection ----
+  if (req.method === "GET" && path === "/api/gmail/status") {
+    if (!HAS_GOOGLE && !MOCK) return send(res, 200, { configured: false, connected: false });
+    const tok = loadToken();
+    const connected = MOCK ? true : !!tok;
+    const email = connected && HAS_GOOGLE ? await gmailProfileEmail() : (MOCK ? "you@example.com" : "");
+    return send(res, 200, { configured: HAS_GOOGLE || MOCK, connected: connected, email: email, mock: MOCK && !HAS_GOOGLE });
+  }
+  if (req.method === "GET" && path === "/api/gmail/auth") {
+    if (!HAS_GOOGLE) return sendHtml(res, 400, "<p>Gmail is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the proxy's .env (see README).</p>");
+    res.writeHead(302, { Location: gmailAuthUrl() });
+    return res.end();
+  }
+  if (req.method === "GET" && path === "/api/gmail/callback") {
+    const q = new URLSearchParams(req.url.split("?")[1] || "");
+    const code = q.get("code");
+    if (!code) return sendHtml(res, 400, "<p>Missing authorization code.</p>");
+    try {
+      await exchangeCode(code);
+      const back = APP_RETURN_URL ? ('<p><a href="' + APP_RETURN_URL + '">Return to the app</a></p>') : "";
+      return sendHtml(res, 200, "<html><body style='font-family:sans-serif;background:#0f1620;color:#e7eef6;text-align:center;padding:60px'>" +
+        "<h2>✅ Gmail connected</h2><p>You can close this tab and click <strong>Sync Gmail</strong> in the app.</p>" + back +
+        "</body></html>");
+    } catch (e) {
+      return sendHtml(res, 400, "<p>Gmail connection failed: " + e.message + "</p>");
+    }
+  }
+  if (req.method === "POST" && path === "/api/gmail/check") {
+    try {
+      const body = await readBody(req);
+      const results = await gmailCheck(body.emails || []);
+      return send(res, 200, { results: results });
+    } catch (e) {
+      return send(res, 400, { error: e.message });
+    }
   }
 
   if (req.method === "POST" && path === "/api/find-buyers") {
@@ -280,5 +436,7 @@ server.listen(PORT, () => {
   console.log("Apollo proxy listening on http://localhost:" + PORT);
   console.log("  mode:", MOCK ? "MOCK (no real Apollo calls)" : "LIVE", "| key:", API_KEY ? "set" : "MISSING");
   console.log("  phone webhook:", WEBHOOK_BASE_URL ? (WEBHOOK_BASE_URL + "/api/apollo-webhook") : "disabled (set WEBHOOK_BASE_URL)");
-  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones");
+  console.log("  gmail:", HAS_GOOGLE ? ("configured · redirect " + GOOGLE_REDIRECT_URI) : "disabled (set GOOGLE_CLIENT_ID/SECRET)");
+  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones,");
+  console.log("             GET /api/gmail/status, GET /api/gmail/auth, GET /api/gmail/callback, POST /api/gmail/check");
 });

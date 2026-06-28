@@ -3,6 +3,9 @@
 .env.local
 *.key
 
+# Gmail OAuth token cache (contains access/refresh tokens)
+.gmail-token.json
+
 # Node
 node_modules/
 npm-debug.log*

@@ -105,6 +105,7 @@ window.App = window.App || {};
     else if (route.view === "settings") c.innerHTML = viewSettings();
     else if (route.view === "companies") c.innerHTML = viewCompanies(null);
     else if (route.view === "country") c.innerHTML = viewCompanies(route.country);
+    if (route.view === "settings") refreshGmailStatus();
     var s = c.querySelector(".search");
     if (s) s.focus();
   }
@@ -139,6 +140,7 @@ window.App = window.App || {};
     return '<div class="page-head"><div><h2>Sales Dashboard</h2>' +
       '<div class="sub">Track non-ferrous buyers across all 27 EU member states.</div></div>' +
       '<div class="spacer"></div>' +
+      '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn primary" data-action="add-company">+ Add buyer</button></div>' +
       replyBanner +
       '<div class="stat-row">' +
@@ -203,6 +205,7 @@ window.App = window.App || {};
       '<div class="spacer"></div>' +
       '<input class="search" placeholder="Search name, email, city…" value="' + esc(query) + '" oninput="App.onSearch(this.value)"/>' +
       '<button class="btn" data-action="bulk-find"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>👥 Find buyers (all)</button>' +
+      '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn" data-action="import">⇪ Import CSV</button>' +
       '<button class="btn" data-action="export">⇩ Export</button>' +
       '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>';
@@ -321,6 +324,13 @@ window.App = window.App || {};
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
           '<button class="btn" data-action="test-proxy">Test proxy connection</button></div>' +
       "</div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>📥 Gmail auto-status</h3>' +
+        '<div class="meta">Connect your Gmail (read-only) so the app can set 🟡 when you\'ve emailed a buyer and 🟢 when they reply. Requires Google OAuth credentials in the proxy\'s <span class="kbd">.env</span> (see README).</div>' +
+        '<div id="gmail-status" class="meta" style="margin-top:10px;">Checking connection…</div>' +
+        '<div class="btn-row" style="margin-top:10px;">' +
+          '<button class="btn primary" data-action="connect-gmail">Connect Gmail</button>' +
+          '<button class="btn" data-action="sync-gmail">📥 Sync now</button>' +
+        "</div></div>" +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>Data</h3>' +
         '<div class="meta">Back up or move your buyer list between devices.</div>' +
         '<div class="btn-row" style="margin-top:10px;">' +
@@ -404,7 +414,10 @@ window.App = window.App || {};
 
   function importForm() {
     var body =
-      '<div class="notice">Paste <strong>CSV</strong> (with a header row) or a previously exported <strong>JSON</strong> backup.</div>' +
+      '<div class="notice">📋 New here? <strong>Load the EU starter list</strong> — ' + (App.EU_SEED ? App.EU_SEED.length : 0) +
+      ' real EU non-ferrous producers & recyclers as research leads, then use <strong>👥 Find buyers</strong> to pull their contacts.' +
+      '<div style="margin-top:8px;"><button class="btn primary sm" data-action="load-eu-seed">Load EU starter list</button></div></div>' +
+      '<div class="notice">Or paste <strong>CSV</strong> (with a header row) or a previously exported <strong>JSON</strong> backup.</div>' +
       '<div class="meta" style="margin-bottom:8px;">CSV columns recognised: <span class="kbd">name</span> <span class="kbd">country</span> <span class="kbd">city</span> ' +
       '<span class="kbd">contact</span> <span class="kbd">email</span> <span class="kbd">phone</span> <span class="kbd">website</span> ' +
       '<span class="kbd">materials</span> <span class="kbd">notes</span>. ' +
@@ -479,6 +492,60 @@ window.App = window.App || {};
       });
     }
     step();
+  }
+
+  /* Collect every email address tied to a company (primary + discovered people). */
+  function companyEmails(c) {
+    var set = {};
+    if (c.email) set[c.email.toLowerCase()] = 1;
+    (c.people || []).forEach(function (p) { if (p.email) set[p.email.toLowerCase()] = 1; });
+    return Object.keys(set);
+  }
+
+  /* Sync traffic-light status from Gmail: reply -> green, contacted -> yellow. */
+  function syncGmail() {
+    var companies = Store.companies();
+    var emails = [];
+    companies.forEach(function (c) { emails = emails.concat(companyEmails(c)); });
+    emails = emails.filter(function (e, i) { return emails.indexOf(e) === i; });
+    if (!emails.length) { toast("No buyer emails yet — add or find contacts first."); return; }
+
+    toast("Syncing with Gmail…");
+    App.Gmail.check(emails).then(function (results) {
+      // detect "not connected" responses
+      var notConnected = emails.every(function (e) {
+        var r = results[e]; return r && r.error && /not connected|not configured/i.test(r.error);
+      });
+      if (notConnected) {
+        toast("Gmail isn't connected yet — open Settings → Connect Gmail.");
+        return;
+      }
+      var greens = 0, yellows = 0;
+      companies.forEach(function (c) {
+        var mine = companyEmails(c);
+        var replied = mine.some(function (e) { return results[e] && results[e].replied; });
+        var contacted = mine.some(function (e) { return results[e] && results[e].contacted; });
+        if (replied) {
+          if (c.status !== "green") { Store.setStatus(c.id, "green", { lastReplyAt: Date.now() }); greens++; }
+        } else if (contacted && c.status === "red") {
+          Store.setStatus(c.id, "yellow", { lastEmailAt: c.lastEmailAt || Date.now() }); yellows++;
+        }
+      });
+      render();
+      toast("Gmail synced — " + greens + " new reply(ies) 🟢, " + yellows + " marked awaiting 🟡.");
+    }).catch(function (err) { toast(err.message); });
+  }
+
+  /* Settings: show the current Gmail connection state. */
+  function refreshGmailStatus() {
+    var el = document.getElementById("gmail-status");
+    if (!el) return;
+    App.Gmail.status().then(function (s) {
+      if (s.unreachable) el.innerHTML = "⚪ Proxy not reachable — start it to use Gmail sync.";
+      else if (!s.configured) el.innerHTML = "⚪ Not configured — add Google OAuth credentials to the proxy's .env (see README).";
+      else if (s.connected) el.innerHTML = "🟢 Connected" + (s.email ? " as <strong>" + esc(s.email) + "</strong>" : "") + (s.mock ? " (mock)" : "");
+      else el.innerHTML = "🟡 Configured but not connected — click “Connect Gmail”.";
+    });
   }
 
   /* =========================================================
@@ -691,7 +758,22 @@ window.App = window.App || {};
         break;
       }
 
+      case "connect-gmail":
+        window.open(App.Gmail.connectUrl(), "_blank");
+        toast("Connect Gmail in the new tab, then click “Sync now”.");
+        break;
+
+      case "sync-gmail":
+        syncGmail();
+        break;
+
       case "import": importForm(); break;
+      case "load-eu-seed": {
+        var added = Store.importSeed(App.EU_SEED || []);
+        closeModal(); render();
+        toast(added ? (added + " starter companies loaded — now run “Find buyers”.") : "Starter list already loaded.");
+        break;
+      }
       case "do-import": {
         var txt = $("import-text").value.trim();
         if (!txt) { toast("Paste some data first."); break; }

@@ -24,6 +24,9 @@ European Union. It runs entirely in your browser — no install, no build step, 
 | **Import** buyers from CSV (incl. Apollo.io exports) · **Export** JSON backup | ✅ |
 | Search & filter, dashboard stats, reply notifications | ✅ |
 | **Apollo.io buyer finder** — pulls procurement/buyer/trader contacts per company via a secure local proxy | ✅ |
+| **EU starter list** — one click loads ~50 real EU non-ferrous producers/recyclers as research leads | ✅ |
+| **Gmail auto-status** — connect Gmail (read-only) to auto-set 🟡/🟢 from your inbox | ✅ |
+| **Auto-deploy** to GitHub Pages on every push (included workflow) | ✅ |
 
 Your data is saved locally in your browser (`localStorage`). Use **Export** to back it up or move
 it between devices.
@@ -44,9 +47,12 @@ python3 -m http.server 8000
 
 **Option B — host free on GitHub Pages (recommended, gives you a shareable URL)**
 
-1. Push this folder to a GitHub repo (a branch/PR has already been created for you).
-2. Repo **Settings → Pages → Build from branch →** pick the branch and `/ (root)`.
-3. Open the URL GitHub gives you. Done — works from any device.
+This repo ships with a GitHub Actions workflow (`.github/workflows/deploy-pages.yml`) that
+**auto-deploys on every push to `main`**. To turn it on (one time):
+
+1. Repo **Settings → Pages → Build and deployment → Source: "GitHub Actions"**.
+2. Push anything to `main` (or run the workflow manually from the **Actions** tab).
+3. Your site goes live at `https://<your-user>.github.io/metals-crm/` and updates on every push.
 
 > The "Send email" and "View thread" buttons open **Gmail in a new tab**, so make sure you're
 > logged into your Google work account in the same browser.
@@ -85,6 +91,13 @@ Aurubis AG,DE,Hamburg,Procurement,buyer@example.com,+49...,aurubis.com,copper-ca
 ```
 
 **To use Apollo.io:** see the dedicated section below — it's built in.
+
+### Quick start: the EU starter list
+Don't want to type companies in? Click **Import → "Load EU starter list"** to drop in ~50 real EU
+non-ferrous producers, smelters and recyclers (Aurubis, Boliden, KGHM, AMAG, Atlantic Copper,
+ElvalHalcor, …) with their public domains. These are **research leads** — contact emails are left
+blank on purpose; run **👥 Find buyers** to pull verified procurement contacts, and verify the
+indicative material tags before pitching.
 
 ---
 
@@ -145,6 +158,33 @@ Returns realistic sample contacts so you can see the whole flow without a key or
 
 ---
 
+## 📥 Gmail auto-status (optional)
+
+Connect your Gmail **read-only** so the app updates each buyer's traffic light automatically:
+a reply from them → 🟢 green, you've emailed them → 🟡 yellow. The same local proxy handles it;
+your Google tokens stay server-side in a git-ignored file (`.gmail-token.json`).
+
+### Setup (one time) — Google Cloud Console
+1. Create a project, then **APIs & Services → Enable APIs → enable the *Gmail API***.
+2. **Credentials → Create credentials → OAuth client ID → type: Web application.**
+3. Add an **Authorized redirect URI**: `http://localhost:8787/api/gmail/callback`
+   (or your deployed proxy's `/api/gmail/callback`).
+4. On the OAuth consent screen, add yourself as a **test user**.
+5. Put the client id/secret in `.env`:
+   ```bash
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   # GOOGLE_REDIRECT_URI=http://localhost:8787/api/gmail/callback   # only if non-default
+   ```
+6. Restart the proxy, then in the app: **Settings → Gmail auto-status → Connect Gmail**, approve,
+   and click **Sync now** (or the **📥 Sync Gmail** button on any list).
+
+The read-only scope means the app can *detect* replies but never send or modify mail — sending
+still happens through the Gmail compose button you review yourself. Try it without credentials by
+running the proxy in `MOCK=1` to see the sync flow.
+
+---
+
 ## 💱 Prices
 
 Click **Update prices** to enter today's LME settlement values and the **EU duty-paid aluminium
@@ -176,7 +216,7 @@ serverless function that scrapes/forwards a data source you're licensed for work
 |---|---|
 | **Real top-50 buyer lists + verified contacts** | An Apollo.io paid plan/API, or your own sourced list, imported via CSV. The app ships with a few clearly-labelled `[SAMPLE]` rows — delete them and import your real data. |
 | **Procurement/buyer contacts per company** | ✅ Built in via the Apollo proxy (see above). Emails/phones need the *Reveal* toggle (uses credits). |
-| **Auto "replied → green"** + desktop notifications | Gmail API + OAuth and a small backend that watches your inbox and updates each buyer's status. |
+| **Auto "replied → green"** + status sync | ✅ Built in via Gmail read-only OAuth (see "Gmail auto-status"). |
 | **Live LME / SMM prices** | A licensed data feed exposed through a proxy endpoint (`PRICE_FEED_URL` above). |
 | **Multi-user / shared team data** | Swap `localStorage` for a hosted database (the `Store` module is the single integration point). |
 
@@ -188,17 +228,21 @@ serverless function that scrapes/forwards a data source you're licensed for work
 metals-crm/
 ├── index.html              # app shell
 ├── README.md
-├── .env.example            # copy to .env, add your Apollo key (git-ignored)
+├── .env.example            # copy to .env, add Apollo/Google keys (git-ignored)
+├── .github/workflows/
+│   └── deploy-pages.yml    # auto-deploy to GitHub Pages on push to main
 ├── server/
-│   └── apollo-proxy.js     # zero-dep proxy that holds your Apollo key
+│   └── apollo-proxy.js     # zero-dep backend: Apollo key + Gmail OAuth
 └── assets/
     ├── css/styles.css      # all styling (no framework)
     └── js/
         ├── data.js         # 25 products, 27 countries, price rows, buyer titles
+        ├── seed-eu.js      # ~50 EU non-ferrous firms (research leads)
         ├── store.js        # localStorage state + CSV/JSON import-export + people
         ├── prices.js       # price formatting, all-in/derived values, live-feed hook
         ├── email.js        # Gmail compose + thread links, pre-written drafts
         ├── apollo.js       # front-end client for the Apollo proxy
+        ├── gmail.js        # front-end client for Gmail auto-status
         └── app.js          # views, routing, all interactivity
 ```
 
