@@ -225,6 +225,7 @@ window.App = window.App || {};
       '<div class="spacer"></div>' +
       '<input class="search" placeholder="Search name, email, city…" value="' + esc(query) + '" oninput="App.onSearch(this.value)"/>' +
       '<button class="btn" data-action="bulk-find"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>👥 Find buyers (all)</button>' +
+      (countryCode ? '<button class="btn" data-action="discover-companies" data-country="' + countryCode + '">🔎 Discover companies</button>' : "") +
       '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn" data-action="import">⇪ Import CSV</button>' +
       '<button class="btn" data-action="export">⇩ Export</button>' +
@@ -517,6 +518,28 @@ window.App = window.App || {};
     var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
       (people.length ? '<button class="btn primary" data-action="save-selected-people" data-id="' + company.id + '">Add selected</button>' : "");
     openModal("👥 Buyers at " + company.name, body, footer);
+  }
+
+  function openCompanyPicker(countryCode, res) {
+    var country = App.countryByCode(countryCode);
+    var companies = res.companies || [];
+    var mockNote = res.mock
+      ? '<div class="notice warn">Proxy is in <strong>MOCK mode</strong> — these are samples. Set APOLLO_API_KEY for real company discovery.</div>'
+      : "";
+    var rows = companies.length ? companies.map(function (c) {
+      var enc = encodeURIComponent(JSON.stringify(c));
+      return '<label class="pick"><input type="checkbox" data-company="' + enc + '" ' + (c.domain ? "checked" : "") + ">" +
+        '<div><div class="pick-name">' + esc(c.name || "—") + "</div>" +
+        '<div class="pick-contact">' + (c.domain ? "🌐 " + esc(c.domain) : "no website") + (c.city ? " · " + esc(c.city) : "") + "</div></div></label>";
+    }).join("") : '<div class="empty"><div class="big">🔍</div><p>No companies returned. Try again or adjust Apollo filters.</p></div>';
+
+    var body = mockNote +
+      '<div class="meta" style="margin-bottom:10px;">Found ' + companies.length + " real companies in <strong>" + esc(country ? country.name : countryCode) +
+      "</strong>. Add the ones you want, then run <strong>Find buyers (all)</strong> to pull verified emails.</div>" +
+      '<div class="pick-list">' + rows + "</div>";
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      (companies.length ? '<button class="btn primary" data-action="save-discovered" data-country="' + countryCode + '">Add selected</button>' : "");
+    openModal("🔎 Discover companies — " + (country ? country.name : countryCode), body, footer);
   }
 
   /* Bulk: find buyers for every company (optionally in one country) with a
@@ -841,6 +864,33 @@ window.App = window.App || {};
 
       case "bulk-find": {
         bulkFindBuyers(a.getAttribute("data-country") || null);
+        break;
+      }
+
+      case "discover-companies": {
+        var cc = a.getAttribute("data-country");
+        var country = App.countryByCode(cc);
+        a.textContent = "⏳ Searching…"; a.setAttribute("disabled", "1");
+        App.Apollo.findCompanies(country ? country.name : cc).then(function (res) {
+          openCompanyPicker(cc, res);
+        }).catch(function (err) { toast(err.message); }).then(function () { render(); });
+        break;
+      }
+
+      case "save-discovered": {
+        var dm = a.closest(".modal");
+        var dcc = a.getAttribute("data-country");
+        var chosen = [];
+        dm.querySelectorAll("[data-company]:checked").forEach(function (el) {
+          chosen.push(JSON.parse(decodeURIComponent(el.getAttribute("data-company"))));
+        });
+        if (!chosen.length) { toast("Select at least one company."); break; }
+        var seed = chosen.map(function (x) {
+          return { name: x.name, country: dcc, city: x.city || "", website: x.domain || "", materials: [], notes: "Discovered via Apollo — run Find buyers for contacts." };
+        });
+        var n = Store.importSeed(seed);
+        closeModal(); render();
+        toast(n + " companies added — now run “Find buyers (all)” to get emails.");
         break;
       }
 

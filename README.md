@@ -99,11 +99,17 @@ Aurubis AG,DE,Hamburg,Procurement,buyer@example.com,+49...,aurubis.com,copper-ca
 **To use Apollo.io:** see the dedicated section below — it's built in.
 
 ### Quick start: the EU starter list
-Don't want to type companies in? Click **Import → "Load EU starter list"** to drop in ~50 real EU
+Don't want to type companies in? Click **Import → "Load EU starter list"** to drop in ~75 real EU
 non-ferrous producers, smelters and recyclers (Aurubis, Boliden, KGHM, AMAG, Atlantic Copper,
-ElvalHalcor, …) with their public domains. These are **research leads** — contact emails are left
-blank on purpose; run **👥 Find buyers** to pull verified procurement contacts, and verify the
-indicative material tags before pitching.
+ElvalHalcor, Wieland, KME, Constellium, Talum, Alro…) across ~24 countries, with their public
+domains. These are **research leads** — contact emails are left blank on purpose; run **👥 Find
+buyers** to pull verified procurement contacts, and verify the indicative material tags before pitching.
+
+### 🔎 Discover more companies (Apollo org search)
+On any country page, click **🔎 Discover companies** to have Apollo return **real companies** in that
+country/industry (name + website). Tick the ones you want → they're added → then **Find buyers (all)**
+fills their verified emails. This is the non-fabricated way to build toward ~25 buyers per country
+without inventing anything. (Needs your Apollo key; works in `MOCK=1` to preview the flow.)
 
 ---
 

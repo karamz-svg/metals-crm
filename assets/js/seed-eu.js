@@ -1,120 +1,155 @@
 /* ============================================================
    seed-eu.js  —  EU non-ferrous starter buyer list (research leads)
    ------------------------------------------------------------
-   These are real, publicly-known non-ferrous producers, smelters
-   and recyclers across the EU, with their public website domains.
-   They are STARTING RESEARCH LEADS, not verified buyers:
-     • Contact emails/phones are intentionally left blank — use the
-       Apollo "Find buyers" button to pull verified procurement
-       contacts for each domain.
-     • The "materials" tags are INDICATIVE (what each firm broadly
-       works with) and should be verified before you pitch.
-   Load them from the app: Import → "Load EU starter list".
+   Real, publicly-known non-ferrous producers, smelters, refiners,
+   fabricators and recyclers across the EU, with their public website
+   domains. These are STARTING RESEARCH LEADS, not verified buyers:
+     • Contact emails/phones are intentionally LEFT BLANK — use the
+       Apollo "Find buyers" / "Find buyers (all)" button to pull
+       VERIFIED procurement contacts (emails) for each domain. We do
+       not hand-type emails, to avoid fabricated/incorrect addresses.
+     • The "materials" tags are INDICATIVE; verify before pitching.
+     • Domains are best-effort — Apollo matches by domain, so a wrong
+       one simply returns no results (low risk). Verify as you go.
+   Coverage note: big industrial countries have many entries; small
+   member states have few or none with a real non-ferrous presence,
+   so they're lighter on purpose (no invented companies).
+   Load from the app: Import → "Load EU starter list".
    ============================================================ */
 window.App = window.App || {};
 
 (function (App) {
   "use strict";
 
-  var N = "Research lead — verify contact & materials; pull contacts via Apollo.";
+  var N = "Research lead — verify domain & contact; pull verified emails via Apollo.";
+  function C(name, country, city, website, materials) {
+    return { name: name, country: country, city: city, website: website, materials: materials, notes: N };
+  }
 
   App.EU_SEED = [
-    // Germany
-    { name: "Aurubis AG", country: "DE", city: "Hamburg", website: "aurubis.com", materials: ["copper-cathode", "cu-scrap-millberry", "copper-billet"], notes: N },
-    { name: "Wieland-Werke AG", country: "DE", city: "Ulm", website: "wieland.com", materials: ["brass-alloy-ingots", "brass-billet", "copper-busbar"], notes: N },
-    { name: "KME Germany GmbH", country: "DE", city: "Osnabrück", website: "kme.com", materials: ["copper-busbar", "copper-pipe", "brass-billet"], notes: N },
-    { name: "TRIMET Aluminium SE", country: "DE", city: "Essen", website: "trimet.eu", materials: ["aluminium-ingots", "al-sows", "al-scrap-ubc"], notes: N },
-    { name: "Speira GmbH", country: "DE", city: "Grevenbroich", website: "speira.com", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Germany ---------------- */
+    C("Aurubis AG", "DE", "Hamburg", "aurubis.com", ["copper-cathode", "cu-scrap-millberry", "copper-billet"]),
+    C("Wieland-Werke AG", "DE", "Ulm", "wieland.com", ["brass-alloy-ingots", "brass-billet", "copper-busbar"]),
+    C("KME Germany GmbH", "DE", "Osnabrück", "kme.com", ["copper-busbar", "copper-pipe", "brass-billet"]),
+    C("TRIMET Aluminium SE", "DE", "Essen", "trimet.eu", ["aluminium-ingots", "al-sows", "al-scrap-ubc"]),
+    C("Speira GmbH", "DE", "Grevenbroich", "speira.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("MKM Mansfelder Kupfer und Messing", "DE", "Hettstedt", "mkm.eu", ["copper-busbar", "copper-rod", "brass-billet"]),
+    C("Diehl Metall", "DE", "Röthenbach", "diehl.com", ["brass-alloy-ingots", "brass-billet"]),
+    C("Otto Fuchs KG", "DE", "Meinerzhagen", "otto-fuchs.com", ["aluminium-ingots", "brass-alloy-ingots"]),
+    C("ELG Haniel", "DE", "Duisburg", "elg.de", ["ss-304"]),
+    C("Oryx Stainless", "DE", "Mülheim", "oryx.de", ["ss-304"]),
+    C("TSR Recycling", "DE", "Lünen", "tsr.eu", ["cu-scrap-berry", "al-scrap-ubc", "ss-304"]),
+    C("Scholz Recycling", "DE", "Essingen", "scholz-recycling.de", ["cu-scrap-berry", "al-scrap-ubc"]),
+    C("Novelis Deutschland", "DE", "Göttingen", "novelis.com", ["al-scrap-ubc", "aluminium-ingots"]),
+    C("HME Brass Germany", "DE", "Berlin", "hmemetal.com", ["brass-alloy-ingots", "brass-billet"]),
 
-    // Sweden
-    { name: "Boliden AB", country: "SE", city: "Stockholm", website: "boliden.com", materials: ["copper-cathode", "zinc-ingot-hg", "lead-refined"], notes: N },
-    { name: "Gränges AB", country: "SE", city: "Stockholm", website: "granges.com", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
-    { name: "Stena Metall AB", country: "SE", city: "Gothenburg", website: "stenametall.com", materials: ["cu-scrap-berry", "al-scrap-ubc", "ss-304"], notes: N },
+    /* ---------------- Italy ---------------- */
+    C("KME Italy S.p.A.", "IT", "Florence", "kme.com", ["copper-busbar", "copper-pipe"]),
+    C("Raffmetal S.p.A.", "IT", "Casto (Brescia)", "raffmetal.it", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Eural Gnutti S.p.A.", "IT", "Rovato (Brescia)", "eural.com", ["brass-billet", "brass-alloy-ingots"]),
+    C("Eredi Gnutti Metalli", "IT", "Brescia", "egm.it", ["brass-billet", "copper-busbar"]),
+    C("Profilglass S.p.A.", "IT", "Fano", "profilglass.it", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Laminazione Sottile", "IT", "San Marco Evangelista", "laminazionesottile.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Metra S.p.A.", "IT", "Rodengo Saiano", "metra.it", ["aluminium-ingots"]),
+    C("Service Metal Company", "IT", "Brescia", "servicemetalco.com", ["brass-billet", "brass-alloy-ingots"]),
 
-    // Finland
-    { name: "Kuusakoski Oy", country: "FI", city: "Espoo", website: "kuusakoski.com", materials: ["cu-scrap-millberry", "al-scrap-ubc", "ss-304"], notes: N },
-    { name: "Boliden Harjavalta Oy", country: "FI", city: "Harjavalta", website: "boliden.com", materials: ["copper-cathode"], notes: N },
+    /* ---------------- France ---------------- */
+    C("Nexans", "FR", "Paris", "nexans.com", ["copper-rod", "copper-busbar"]),
+    C("Constellium SE", "FR", "Paris", "constellium.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Recylex SA", "FR", "Suresnes", "recylex.eu", ["lead-refined", "lead-oxide", "zinc-oxide"]),
+    C("Aluminium Dunkerque", "FR", "Dunkerque", "aluminiumdunkerque.com", ["aluminium-ingots", "al-sows"]),
+    C("Derichebourg Environnement", "FR", "Paris", "derichebourg.com", ["cu-scrap-berry", "al-scrap-ubc", "ss-304"]),
+    C("Paprec Group", "FR", "La Courneuve", "paprec.com", ["cu-scrap-berry", "al-scrap-ubc"]),
+    C("Eramet", "FR", "Paris", "eramet.com", ["ss-304"]),
 
-    // Belgium
-    { name: "Umicore", country: "BE", city: "Brussels", website: "umicore.com", materials: ["lead-oxide", "zinc-oxide", "copper-cathode"], notes: N },
-    { name: "Aurubis Beerse", country: "BE", city: "Beerse", website: "aurubis.com", materials: ["copper-cathode", "cu-scrap-millberry"], notes: N },
+    /* ---------------- Spain ---------------- */
+    C("Atlantic Copper S.L.U.", "ES", "Huelva", "atlanticcopper.es", ["copper-cathode", "copper-billet"]),
+    C("Cunext Group", "ES", "Córdoba", "cunext.com", ["copper-rod", "copper-cathode"]),
+    C("La Farga", "ES", "Les Masies de Voltregà", "lafarga.com", ["copper-rod", "copper-busbar", "cu-scrap-millberry"]),
+    C("Aludium", "ES", "Madrid", "aludium.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Alcoa San Ciprián", "ES", "Lugo", "alcoa.com", ["aluminium-ingots", "al-sows"]),
+    C("Befesa S.A.", "ES", "Bilbao", "befesa.com", ["zinc-oxide", "al-scrap-ubc"]),
 
-    // Netherlands
-    { name: "Nyrstar Budel", country: "NL", city: "Budel", website: "nyrstar.com", materials: ["zinc-ingot-hg", "zinc-oxide"], notes: N },
-    { name: "Nedzink B.V.", country: "NL", city: "Budel", website: "nedzink.com", materials: ["zinc-ingot-hg", "zinc-oxide"], notes: N },
-    { name: "Aldel (Aluminium Delfzijl)", country: "NL", city: "Delfzijl", website: "aldel.nl", materials: ["aluminium-ingots", "al-sows"], notes: N },
+    /* ---------------- Poland ---------------- */
+    C("KGHM Polska Miedź S.A.", "PL", "Lubin", "kghm.com", ["copper-cathode", "copper-rod", "copper-billet"]),
+    C("Grupa Kęty S.A.", "PL", "Kęty", "grupakety.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Boryszew S.A. (Hutmen)", "PL", "Warsaw", "boryszew.com", ["brass-billet", "copper-busbar"]),
+    C("Impexmetal S.A.", "PL", "Warsaw", "impexmetal.com", ["brass-alloy-ingots", "copper-busbar"]),
+    C("Huta Cynku Miasteczko Śląskie", "PL", "Miasteczko Śląskie", "hcm.com.pl", ["zinc-ingot-hg", "zinc-oxide"]),
 
-    // Spain
-    { name: "Atlantic Copper S.L.U.", country: "ES", city: "Huelva", website: "atlanticcopper.es", materials: ["copper-cathode", "copper-billet"], notes: N },
-    { name: "Cunext Group", country: "ES", city: "Córdoba", website: "cunext.com", materials: ["copper-rod", "copper-cathode"], notes: N },
-    { name: "Befesa S.A.", country: "ES", city: "Bilbao", website: "befesa.com", materials: ["zinc-oxide", "al-scrap-ubc"], notes: N },
+    /* ---------------- Belgium ---------------- */
+    C("Umicore", "BE", "Brussels", "umicore.com", ["lead-oxide", "zinc-oxide", "copper-cathode"]),
+    C("Aurubis Beerse", "BE", "Beerse", "aurubis.com", ["copper-cathode", "cu-scrap-millberry"]),
+    C("Campine NV", "BE", "Beerse", "campine.com", ["lead-oxide", "lead-antimony"]),
 
-    // France
-    { name: "Nexans", country: "FR", city: "Paris", website: "nexans.com", materials: ["copper-rod", "copper-busbar"], notes: N },
-    { name: "Constellium SE", country: "FR", city: "Paris", website: "constellium.com", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
-    { name: "Recylex SA", country: "FR", city: "Suresnes", website: "recylex.eu", materials: ["lead-refined", "lead-oxide", "zinc-oxide"], notes: N },
+    /* ---------------- Netherlands ---------------- */
+    C("Nyrstar Budel", "NL", "Budel", "nyrstar.com", ["zinc-ingot-hg", "zinc-oxide"]),
+    C("Nedzink B.V.", "NL", "Budel", "nedzink.com", ["zinc-ingot-hg", "zinc-oxide"]),
+    C("Aldel (Aluminium Delfzijl)", "NL", "Delfzijl", "aldel.nl", ["aluminium-ingots", "al-sows"]),
+    C("Oryx Stainless (NL)", "NL", "Roermond", "oryx.de", ["ss-304"]),
 
-    // Italy
-    { name: "Raffmetal S.p.A.", country: "IT", city: "Brescia", website: "raffmetal.it", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
-    { name: "Eural Gnutti S.p.A.", country: "IT", city: "Brescia", website: "eural.com", materials: ["brass-billet", "brass-alloy-ingots"], notes: N },
-    { name: "KME Italy S.p.A.", country: "IT", city: "Florence", website: "kme.com", materials: ["copper-busbar", "copper-pipe"], notes: N },
+    /* ---------------- Sweden ---------------- */
+    C("Boliden AB", "SE", "Stockholm", "boliden.com", ["copper-cathode", "zinc-ingot-hg", "lead-refined"]),
+    C("Gränges AB", "SE", "Stockholm", "granges.com", ["aluminium-ingots", "al-scrap-ubc"]),
+    C("Stena Metall AB", "SE", "Gothenburg", "stenametall.com", ["cu-scrap-berry", "al-scrap-ubc", "ss-304"]),
 
-    // Poland
-    { name: "KGHM Polska Miedź S.A.", country: "PL", city: "Lubin", website: "kghm.com", materials: ["copper-cathode", "copper-rod", "copper-billet"], notes: N },
-    { name: "Grupa Kęty S.A.", country: "PL", city: "Kęty", website: "grupakety.com", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
-    { name: "Boryszew S.A. (Hutmen)", country: "PL", city: "Warsaw", website: "boryszew.com", materials: ["brass-billet", "copper-busbar"], notes: N },
+    /* ---------------- Finland ---------------- */
+    C("Kuusakoski Oy", "FI", "Espoo", "kuusakoski.com", ["cu-scrap-millberry", "al-scrap-ubc", "ss-304"]),
+    C("Boliden Harjavalta Oy", "FI", "Harjavalta", "boliden.com", ["copper-cathode"]),
 
-    // Austria
-    { name: "AMAG Austria Metall AG", country: "AT", city: "Ranshofen", website: "amag.at", materials: ["aluminium-ingots", "al-scrap-ubc", "al-sows"], notes: N },
-    { name: "Montanwerke Brixlegg AG", country: "AT", city: "Brixlegg", website: "montanwerke-brixlegg.com", materials: ["copper-cathode", "cu-scrap-millberry"], notes: N },
+    /* ---------------- Austria ---------------- */
+    C("AMAG Austria Metall AG", "AT", "Ranshofen", "amag.at", ["aluminium-ingots", "al-scrap-ubc", "al-sows"]),
+    C("Montanwerke Brixlegg AG", "AT", "Brixlegg", "montanwerke-brixlegg.com", ["copper-cathode", "cu-scrap-millberry"]),
 
-    // Greece
-    { name: "ElvalHalcor S.A.", country: "GR", city: "Athens", website: "elvalhalcor.com", materials: ["copper-busbar", "aluminium-ingots", "copper-pipe"], notes: N },
-    { name: "Metlen (Aluminium of Greece)", country: "GR", city: "Athens", website: "metlen.com", materials: ["aluminium-ingots", "al-sows"], notes: N },
+    /* ---------------- Greece ---------------- */
+    C("ElvalHalcor S.A.", "GR", "Athens", "elvalhalcor.com", ["copper-busbar", "aluminium-ingots", "copper-pipe"]),
+    C("Metlen (Aluminium of Greece)", "GR", "Athens", "metlen.com", ["aluminium-ingots", "al-sows"]),
+    C("Viohalco", "GR", "Athens", "viohalco.com", ["copper-busbar", "aluminium-ingots"]),
 
-    // Bulgaria
-    { name: "Aurubis Bulgaria AD", country: "BG", city: "Pirdop", website: "aurubis.com", materials: ["copper-cathode"], notes: N },
-    { name: "KCM AD", country: "BG", city: "Plovdiv", website: "kcm.bg", materials: ["lead-refined", "zinc-ingot-hg", "zinc-oxide"], notes: N },
-    { name: "Alcomet AD", country: "BG", city: "Shumen", website: "alcomet.eu", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Bulgaria ---------------- */
+    C("Aurubis Bulgaria AD", "BG", "Pirdop", "aurubis.com", ["copper-cathode"]),
+    C("KCM AD", "BG", "Plovdiv", "kcm.bg", ["lead-refined", "zinc-ingot-hg", "zinc-oxide"]),
+    C("Alcomet AD", "BG", "Shumen", "alcomet.eu", ["aluminium-ingots", "al-scrap-ubc"]),
 
-    // Slovenia
-    { name: "Talum d.d.", country: "SI", city: "Kidričevo", website: "talum.si", materials: ["aluminium-ingots", "al-sows"], notes: N },
-    { name: "Impol Group", country: "SI", city: "Slovenska Bistrica", website: "impol.si", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Slovenia ---------------- */
+    C("Talum d.d.", "SI", "Kidričevo", "talum.si", ["aluminium-ingots", "al-sows"]),
+    C("Impol Group", "SI", "Slovenska Bistrica", "impol.si", ["aluminium-ingots", "al-scrap-ubc"]),
 
-    // Slovakia
-    { name: "Slovalco a.s.", country: "SK", city: "Žiar nad Hronom", website: "slovalco.sk", materials: ["aluminium-ingots", "al-sows"], notes: N },
-    { name: "Kovohuty a.s.", country: "SK", city: "Krompachy", website: "kovohuty.sk", materials: ["copper-cathode", "cu-scrap-millberry"], notes: N },
+    /* ---------------- Slovakia ---------------- */
+    C("Slovalco a.s.", "SK", "Žiar nad Hronom", "slovalco.sk", ["aluminium-ingots", "al-sows"]),
+    C("Kovohuty a.s.", "SK", "Krompachy", "kovohuty.sk", ["copper-cathode", "cu-scrap-millberry"]),
 
-    // Czechia
-    { name: "Kovohutě Příbram", country: "CZ", city: "Příbram", website: "kovohute.cz", materials: ["lead-refined", "lead-oxide"], notes: N },
-    { name: "AL INVEST Břidličná, a.s.", country: "CZ", city: "Břidličná", website: "alinvest.cz", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Czechia ---------------- */
+    C("Kovohutě Příbram", "CZ", "Příbram", "kovohute.cz", ["lead-refined", "lead-oxide"]),
+    C("AL INVEST Břidličná, a.s.", "CZ", "Břidličná", "alinvest.cz", ["aluminium-ingots", "al-scrap-ubc"]),
 
-    // Romania
-    { name: "Alro S.A.", country: "RO", city: "Slatina", website: "alro.ro", materials: ["aluminium-ingots", "al-sows", "al-scrap-ubc"], notes: N },
+    /* ---------------- Romania ---------------- */
+    C("Alro S.A.", "RO", "Slatina", "alro.ro", ["aluminium-ingots", "al-sows", "al-scrap-ubc"]),
 
-    // Hungary
-    { name: "Hydro Extrusion Hungary", country: "HU", city: "Székesfehérvár", website: "hydro.com", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Hungary ---------------- */
+    C("Hydro Extrusion Hungary", "HU", "Székesfehérvár", "hydro.com", ["aluminium-ingots", "al-scrap-ubc"]),
 
-    // Denmark
-    { name: "H.J. Hansen Recycling", country: "DK", city: "Odense", website: "hjhansen.dk", materials: ["cu-scrap-berry", "al-scrap-ubc", "ss-304"], notes: N },
+    /* ---------------- Denmark ---------------- */
+    C("H.J. Hansen Recycling", "DK", "Odense", "hjhansen.dk", ["cu-scrap-berry", "al-scrap-ubc", "ss-304"]),
+    C("Stena Recycling Denmark", "DK", "Roskilde", "stenarecycling.dk", ["cu-scrap-berry", "al-scrap-ubc"]),
 
-    // Croatia
-    { name: "TLM d.d. Šibenik", country: "HR", city: "Šibenik", website: "tlm.hr", materials: ["aluminium-ingots", "al-scrap-ubc"], notes: N },
+    /* ---------------- Croatia ---------------- */
+    C("TLM d.d. Šibenik", "HR", "Šibenik", "tlm.hr", ["aluminium-ingots", "al-scrap-ubc"]),
 
-    // Luxembourg
-    { name: "Befesa (HQ)", country: "LU", city: "Luxembourg", website: "befesa.com", materials: ["zinc-oxide"], notes: N },
+    /* ---------------- Luxembourg ---------------- */
+    C("Befesa (HQ)", "LU", "Luxembourg", "befesa.com", ["zinc-oxide"]),
 
-    // Portugal
-    { name: "Cabelte (cables)", country: "PT", city: "Porto", website: "cabelte.pt", materials: ["copper-rod", "copper-busbar"], notes: N },
+    /* ---------------- Portugal ---------------- */
+    C("Cabelte", "PT", "Porto", "cabelte.pt", ["copper-rod", "copper-busbar"]),
 
-    // Ireland
-    { name: "Hammond Lane Metal Company", country: "IE", city: "Dublin", website: "hammondlane.ie", materials: ["cu-scrap-berry", "al-scrap-ubc", "ss-304"], notes: N },
+    /* ---------------- Ireland ---------------- */
+    C("Hammond Lane Metal Company", "IE", "Dublin", "hammondlane.ie", ["cu-scrap-berry", "al-scrap-ubc", "ss-304"]),
 
-    // Lithuania
-    { name: "EMP Recycling", country: "LT", city: "Vilnius", website: "emp.lt", materials: ["cu-scrap-berry", "al-scrap-ubc"], notes: N },
+    /* ---------------- Lithuania ---------------- */
+    C("EMP Recycling", "LT", "Vilnius", "emp.lt", ["cu-scrap-berry", "al-scrap-ubc"]),
 
-    // Estonia
-    { name: "Kuusakoski AS (Estonia)", country: "EE", city: "Tallinn", website: "kuusakoski.com", materials: ["cu-scrap-millberry", "al-scrap-ubc"], notes: N }
+    /* ---------------- Estonia ---------------- */
+    C("Kuusakoski AS (Estonia)", "EE", "Tallinn", "kuusakoski.com", ["cu-scrap-millberry", "al-scrap-ubc"])
   ];
 
 })(window.App);
