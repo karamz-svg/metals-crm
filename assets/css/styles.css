@@ -323,3 +323,7 @@ table.sheet td:last-child { width: 44px; text-align: center; }
 /* ---------- Offer table ---------- */
 table.offer tfoot td { border-top: 2px solid var(--line); }
 table.offer .up, table.offer .lt { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+
+/* build/version tag in the sidebar */
+.nav-version { margin-top: 14px; padding: 8px 10px; color: #5a6776; font-size: 10.5px; letter-spacing: .03em; border-top: 1px solid var(--line); }

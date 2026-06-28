@@ -31,11 +31,11 @@ jobs:
 
       - name: Stamp asset version (cache-busting)
         # Rewrite every ?v=… in index.html to this commit's short SHA so each
-        # deploy serves fresh JS/CSS automatically — no manual version bump.
+        # deploy serves fresh JS/CSS. Never fail the build over this.
         run: |
-          sed -i -E "s/\?v=[0-9A-Za-z._-]+/?v=${GITHUB_SHA::8}/g" index.html
-          echo "Stamped assets with ?v=${GITHUB_SHA::8}"
-          grep -o 'assets/js/app.js?v=[0-9A-Za-z._-]*' index.html || true
+          SHA="${GITHUB_SHA:0:8}"
+          sed -i "s/?v=[A-Za-z0-9._-]*/?v=$SHA/g" index.html || true
+          echo "Stamped assets with ?v=$SHA"
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

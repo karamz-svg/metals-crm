@@ -122,7 +122,8 @@ window.App = window.App || {};
 
     $("nav").innerHTML =
       '<div class="nav-section">' + top + "</div>" +
-      euSection + mySection;
+      euSection + mySection +
+      '<div class="nav-version" title="Live build version">' + esc(App.VERSION || "") + "</div>";
   }
 
   /* =========================================================
