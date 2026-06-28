@@ -17,13 +17,18 @@ European Union. It runs entirely in your browser — no install, no build step, 
 | All **27 EU countries** with per-country buyer lists and coverage tiles | ✅ |
 | **Buyer CRM** — name, country, city, website, contact, email, phone, materials, notes | ✅ |
 | **LME price bar** pinned to the top (Copper, Aluminium, Zinc, Lead, Nickel) | ✅ |
+| **Live daily price scan** — auto-fetch from a provider (Metals-API / custom) | ✅ |
 | **EU aluminium duty-paid premium** shown next to the aluminium price | ✅ |
 | **"Send email"** → opens Gmail with a **pre-written** message (products + today's prices) | ✅ |
 | **Traffic-light status** 🔴 not contacted · 🟡 awaiting reply · 🟢 replied | ✅ |
+| **Per-contact traffic lights** — each procurement contact tracked separately; company rolls up | ✅ |
 | Click 🟢 / **View thread** → jumps to that buyer's Gmail conversation | ✅ |
 | **Import** buyers from CSV (incl. Apollo.io exports) · **Export** JSON backup | ✅ |
 | Search & filter, dashboard stats, reply notifications | ✅ |
 | **Apollo.io buyer finder** — pulls procurement/buyer/trader contacts per company via a secure local proxy | ✅ |
+| **EU starter list** — one click loads ~50 real EU non-ferrous producers/recyclers as research leads | ✅ |
+| **Gmail auto-status** — connect Gmail (read-only) to auto-set 🟡/🟢 from your inbox | ✅ |
+| **Auto-deploy** to GitHub Pages on every push (included workflow) | ✅ |
 
 Your data is saved locally in your browser (`localStorage`). Use **Export** to back it up or move
 it between devices.
@@ -44,9 +49,12 @@ python3 -m http.server 8000
 
 **Option B — host free on GitHub Pages (recommended, gives you a shareable URL)**
 
-1. Push this folder to a GitHub repo (a branch/PR has already been created for you).
-2. Repo **Settings → Pages → Build from branch →** pick the branch and `/ (root)`.
-3. Open the URL GitHub gives you. Done — works from any device.
+This repo ships with a GitHub Actions workflow (`.github/workflows/deploy-pages.yml`) that
+**auto-deploys on every push to `main`**. To turn it on (one time):
+
+1. Repo **Settings → Pages → Build and deployment → Source: "GitHub Actions"**.
+2. Push anything to `main` (or run the workflow manually from the **Actions** tab).
+3. Your site goes live at `https://<your-user>.github.io/metals-crm/` and updates on every push.
 
 > The "Send email" and "View thread" buttons open **Gmail in a new tab**, so make sure you're
 > logged into your Google work account in the same browser.
@@ -59,6 +67,10 @@ python3 -m http.server 8000
 - 🟡 **Yellow** — email sent, awaiting reply. *(Clicking "Send email" auto-moves a red buyer to yellow.)*
 - 🟢 **Green** — they replied. A pulsing **"📬 Read reply"** badge appears; click it (or **View thread**)
   to jump straight to the Gmail conversation with that buyer.
+
+**Per-contact lights:** once you add procurement contacts (via Apollo), each person gets their **own**
+mini traffic light, ✉️ email button and 🔎 thread link. The company's headline light automatically
+**rolls up** to the best of its contacts (🟢 if anyone replied, else 🟡 if anyone was emailed).
 
 You set the status with one click on any light. Fully **automatic** reply-detection (inbox →
 auto-green) requires the Gmail API — see *Upgrade paths* below.
@@ -85,6 +97,13 @@ Aurubis AG,DE,Hamburg,Procurement,buyer@example.com,+49...,aurubis.com,copper-ca
 ```
 
 **To use Apollo.io:** see the dedicated section below — it's built in.
+
+### Quick start: the EU starter list
+Don't want to type companies in? Click **Import → "Load EU starter list"** to drop in ~50 real EU
+non-ferrous producers, smelters and recyclers (Aurubis, Boliden, KGHM, AMAG, Atlantic Copper,
+ElvalHalcor, …) with their public domains. These are **research leads** — contact emails are left
+blank on purpose; run **👥 Find buyers** to pull verified procurement contacts, and verify the
+indicative material tags before pitching.
 
 ---
 
@@ -145,28 +164,104 @@ Returns realistic sample contacts so you can see the whole flow without a key or
 
 ---
 
-## 💱 Prices
+## 📥 Gmail auto-status (optional)
 
-Click **Update prices** to enter today's LME settlement values and the **EU duty-paid aluminium
-premium** (reference: the [LME aluminium premium page](https://www.lme.com/metals/non-ferrous/lme-aluminium-premiums/lme-aluminium-premium-duty-paid-european-fastmarkets-mb)).
-They show on the price bar and are embedded into every email draft.
+Connect your Gmail **read-only** so the app updates each buyer's traffic light automatically:
+a reply from them → 🟢 green, you've emailed them → 🟡 yellow. The same local proxy handles it;
+your Google tokens stay server-side in a git-ignored file (`.gmail-token.json`).
 
-### Optional: automatic live prices
-LME/SMM data is **licensed** and their sites **block direct browser requests (CORS)**, so live
-auto-pricing needs a tiny endpoint you control. Once you have one returning JSON like:
+### Setup (one time) — Google Cloud Console
+1. Create a project, then **APIs & Services → Enable APIs → enable the *Gmail API***.
+2. **Credentials → Create credentials → OAuth client ID → type: Web application.**
+3. Add an **Authorized redirect URI**: `http://localhost:8787/api/gmail/callback`
+   (or your deployed proxy's `/api/gmail/callback`).
+4. On the OAuth consent screen, add yourself as a **test user**.
+5. Put the client id/secret in `.env`:
+   ```bash
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   # GOOGLE_REDIRECT_URI=http://localhost:8787/api/gmail/callback   # only if non-default
+   ```
+6. Restart the proxy, then in the app: **Settings → Gmail auto-status → Connect Gmail**, approve,
+   and click **Sync now** (or the **📥 Sync Gmail** button on any list).
 
+The read-only scope means the app can *detect* replies but never send or modify mail — sending
+still happens through the Gmail compose button you review yourself. Try it without credentials by
+running the proxy in `MOCK=1` to see the sync flow.
+
+---
+
+## 👥 Team sync (shared data, optional)
+
+By default each browser keeps its own data. To let a **team share one buyer list**, the proxy can
+store the whole app state and serve it to everyone pointed at the same proxy.
+
+### Setup
+1. Run the proxy somewhere your team can reach (locally for one machine, or deploy it / tunnel it).
+2. (Recommended) protect it with a shared secret in `.env`:
+   ```bash
+   DATA_AUTH_TOKEN=choose-a-long-random-string
+   ```
+3. In each teammate's app: **Settings → Team sync → Enable**, set the **Sync server URL** (blank uses
+   the Apollo proxy URL) and the **same token**, then **Save**.
+
+### How it behaves
+- On load, the app **pulls** the shared state. Local edits are **pushed** automatically (debounced).
+- Buttons **⬇ Pull from team** / **⬆ Push to team** let you sync on demand.
+- It's **last-write-wins** — ideal for a small desk (1–3 people). Click **Pull** before a big editing
+  session so you start from the latest. For heavy concurrent editing, move to a real database
+  (the `Store` module is the single integration point).
+
+---
+
+## 💱 Prices (live, scanned daily)
+
+The board at the **top of every page** shows LME Copper, Aluminium (+ EU duty-paid premium), Zinc,
+Lead and Nickel, and is embedded into every email draft. You can always click **Update prices** to
+enter values by hand, but the app can also **scan a price provider once a day automatically**.
+
+### Why a provider (and why "delayed")
+LME's own data feed is licensed (~$2,490/yr) and SMM is paid too — there's **no free official
+real-time feed**, and the premium webpage can't be reliably or legally scraped. So the proxy pulls
+from a provider **you** choose and normalizes everything to **USD/tonne**. Most affordable feeds are
+**delayed/indicative** — fine for outreach, but confirm the exact number at contract.
+
+### Setup (Metals-API example — has a free tier)
+1. Get a key at metals-api.com (LME symbols: `LME-XCU`, `LME-ALU`, `LME-ZNC`, `LME-LEAD`, `LME-NI`).
+2. In the proxy `.env`:
+   ```bash
+   PRICE_PROVIDER=metals-api
+   PRICE_API_KEY=your_key
+   PRICE_BASE=USD
+   PRICE_REFRESH_HOURS=12      # daily-ish scan; cached so you don't burn quota
+   ```
+3. Restart the proxy. The app auto-scans on load (toggle in **Settings → Live prices**) and you can
+   hit **↻ Live now** anytime. The bar shows the source + "delayed/indicative" + last-updated.
+
+### Calibrating to match LME
+Providers differ in units (per-tonne vs per-lb) and quoting (some return `base/symbol`), so there
+are knobs to line the numbers up exactly — no code changes:
+```bash
+PRICE_INVERT=yes     # use 1/rate (default yes for metals-api)
+PRICE_UNIT=tonne     # tonne | lb | oz  (lb/oz auto-converted to per-tonne)
+PRICE_MULT=1         # final fine-tune multiplier
+```
+Sanity-check the first result against the LME site and adjust if needed.
+
+### Bring your own feed
+Prefer your own data source (or a licensed SMM/Fastmarkets feed)? Set `PRICE_PROVIDER=custom` and
+`PRICE_FEED_URL=` to any endpoint returning normalized JSON:
 ```json
-{ "copper": 9250, "aluminium": 2350, "premium": 295, "zinc": 2700, "lead": 2100, "nickel": 16500, "source": "LME", "asOf": 1730000000000 }
+{ "copper":9250, "aluminium":2350, "zinc":2700, "lead":2050, "nickel":16500,
+  "premium":290, "premiums":{"aluminium":290,"copper":120}, "source":"SMM", "asOf":1730000000000 }
 ```
 
-set it in the browser console or in `assets/js/data.js`:
-
-```js
-window.App.PRICE_FEED_URL = "https://your-endpoint.example.com/prices";
-```
-
-…then the **↻ Live** button on the price bar will pull from it. (A Cloudflare Worker or small
-serverless function that scrapes/forwards a data source you're licensed for works well here.)
+### EU premiums (aluminium + others)
+The aluminium **EU duty-paid premium** ([reference: LME premium page](https://www.lme.com/metals/non-ferrous/lme-aluminium-premiums/lme-aluminium-premium-duty-paid-european-fastmarkets-mb)) shows next to the aluminium price.
+Premiums are **licensed data** (Fastmarkets), so to automate them point `PREMIUM_FEED_URL` at a feed
+you're licensed for (or your own endpoint) returning `{ "aluminium":290, "copper":120, ... }` in
+USD/MT — any metals you include appear as extra chips on the bar. Otherwise enter the premium by
+hand under **Update prices**. (No key needed to try it: run the proxy with `MOCK=1`.)
 
 ---
 
@@ -176,9 +271,9 @@ serverless function that scrapes/forwards a data source you're licensed for work
 |---|---|
 | **Real top-50 buyer lists + verified contacts** | An Apollo.io paid plan/API, or your own sourced list, imported via CSV. The app ships with a few clearly-labelled `[SAMPLE]` rows — delete them and import your real data. |
 | **Procurement/buyer contacts per company** | ✅ Built in via the Apollo proxy (see above). Emails/phones need the *Reveal* toggle (uses credits). |
-| **Auto "replied → green"** + desktop notifications | Gmail API + OAuth and a small backend that watches your inbox and updates each buyer's status. |
-| **Live LME / SMM prices** | A licensed data feed exposed through a proxy endpoint (`PRICE_FEED_URL` above). |
-| **Multi-user / shared team data** | Swap `localStorage` for a hosted database (the `Store` module is the single integration point). |
+| **Auto "replied → green"** + status sync | ✅ Built in via Gmail read-only OAuth (see "Gmail auto-status"). |
+| **Live LME / SMM prices** | ✅ Built in via the proxy price adapter (Metals-API or your own feed; scanned daily). Official real-time LME/SMM still needs a licensed feed. |
+| **Multi-user / shared team data** | ✅ Built in via the proxy `/api/data` store (last-write-wins). For heavy concurrent use, swap in a hosted database — the `Store` module is the single integration point. |
 
 ---
 
@@ -188,17 +283,22 @@ serverless function that scrapes/forwards a data source you're licensed for work
 metals-crm/
 ├── index.html              # app shell
 ├── README.md
-├── .env.example            # copy to .env, add your Apollo key (git-ignored)
+├── .env.example            # copy to .env, add Apollo/Google keys (git-ignored)
+├── .github/workflows/
+│   └── deploy-pages.yml    # auto-deploy to GitHub Pages on push to main
 ├── server/
-│   └── apollo-proxy.js     # zero-dep proxy that holds your Apollo key
+│   └── apollo-proxy.js     # zero-dep backend: Apollo key + Gmail OAuth
 └── assets/
     ├── css/styles.css      # all styling (no framework)
     └── js/
         ├── data.js         # 25 products, 27 countries, price rows, buyer titles
+        ├── seed-eu.js      # ~50 EU non-ferrous firms (research leads)
         ├── store.js        # localStorage state + CSV/JSON import-export + people
         ├── prices.js       # price formatting, all-in/derived values, live-feed hook
         ├── email.js        # Gmail compose + thread links, pre-written drafts
         ├── apollo.js       # front-end client for the Apollo proxy
+        ├── gmail.js        # front-end client for Gmail auto-status
+        ├── sync.js         # front-end client for team sync (shared data)
         └── app.js          # views, routing, all interactivity
 ```
 

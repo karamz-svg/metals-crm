@@ -28,6 +28,8 @@
 "use strict";
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
 const API_KEY = process.env.APOLLO_API_KEY || "";
 const PORT = Number(process.env.PORT || 8787);
@@ -39,6 +41,24 @@ const MOCK = process.env.MOCK === "1" || (!API_KEY && process.env.MOCK !== "0");
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || "").replace(/\/+$/, "");
 
 const APOLLO = "https://api.apollo.io/api/v1";
+
+/* ---------------- Gmail (optional) — auto-detect replies ----------------
+   Lets the app sync each buyer's traffic-light status from your inbox:
+   a reply from them -> green, you contacted them -> yellow.
+   Setup (one time) in Google Cloud Console:
+     1. Create an OAuth 2.0 Client ID (type: Web application).
+     2. Authorized redirect URI: <this proxy>/api/gmail/callback
+        (default http://localhost:8787/api/gmail/callback).
+     3. Enable the Gmail API; add yourself as a test user.
+     4. Put the client id/secret in .env (GOOGLE_CLIENT_ID / _SECRET).
+   Then click "Connect Gmail" in the app's Settings. Read-only scope. */
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || ("http://localhost:" + PORT + "/api/gmail/callback");
+const APP_RETURN_URL = process.env.APP_RETURN_URL || ""; // where to send the browser back after connecting
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const TOKEN_FILE = path.join(__dirname, "..", ".gmail-token.json");
+const HAS_GOOGLE = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 // In-memory store of phone numbers that arrive via the async webhook.
 // Keyed by lowercased "name"; also stored under "domain|name" when known.
@@ -88,6 +108,14 @@ function send(res, status, obj) {
     "Content-Length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function sendHtml(res, status, html) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Access-Control-Allow-Origin": ALLOW_ORIGIN
+  });
+  res.end(html);
 }
 
 function readBody(req) {
@@ -228,13 +256,294 @@ function mockBuyers(opts, titles) {
   return { people: sample.map((p) => mapPerson(p, null)), raw_count: sample.length, mock: true };
 }
 
+/* ---------------- Gmail helpers (optional) ---------------- */
+function loadToken() {
+  try { return JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8")); } catch (e) { return null; }
+}
+function saveToken(t) {
+  try { fs.writeFileSync(TOKEN_FILE, JSON.stringify(t, null, 2)); } catch (e) { console.error("[gmail] could not save token:", e.message); }
+}
+function gmailAuthUrl() {
+  const p = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: "code",
+    scope: GMAIL_SCOPE,
+    access_type: "offline",
+    include_granted_scopes: "true",
+    prompt: "consent"
+  });
+  return "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
+}
+async function googleToken(params) {
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString()
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error_description || j.error || "Google token error");
+  return j;
+}
+async function exchangeCode(code) {
+  const j = await googleToken({
+    code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+    redirect_uri: GOOGLE_REDIRECT_URI, grant_type: "authorization_code"
+  });
+  j.obtained_at = Date.now();
+  saveToken(j);
+  return j;
+}
+async function accessToken() {
+  let tok = loadToken();
+  if (!tok) throw new Error("Gmail not connected.");
+  const ageSec = (Date.now() - (tok.obtained_at || 0)) / 1000;
+  if (!tok.access_token || ageSec > (tok.expires_in || 3600) - 90) {
+    if (!tok.refresh_token) throw new Error("Gmail session expired — reconnect.");
+    const fresh = await googleToken({
+      client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: tok.refresh_token, grant_type: "refresh_token"
+    });
+    tok = Object.assign({}, tok, fresh, { obtained_at: Date.now() });
+    saveToken(tok);
+  }
+  return tok.access_token;
+}
+async function gmailGet(urlPath) {
+  const token = await accessToken();
+  const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me" + urlPath, {
+    headers: { Authorization: "Bearer " + token }
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || ("Gmail API " + r.status));
+  return j;
+}
+async function gmailProfileEmail() {
+  try { const p = await gmailGet("/profile"); return p.emailAddress || ""; } catch (e) { return ""; }
+}
+async function hasMessage(query) {
+  const j = await gmailGet("/messages?maxResults=1&q=" + encodeURIComponent(query));
+  return (j.resultSizeEstimate || 0) > 0 || (j.messages && j.messages.length > 0);
+}
+// For each buyer email: did they reply (from:) and did we contact them (to:)?
+async function gmailCheck(emails) {
+  const out = {};
+  for (const raw of emails) {
+    const e = (raw || "").trim();
+    if (!e) continue;
+    const key = e.toLowerCase();
+    if (!HAS_GOOGLE || !loadToken()) {
+      if (MOCK) { out[key] = { contacted: true, replied: (key.charCodeAt(0) % 2 === 0), mock: true }; continue; }
+      out[key] = { error: "Gmail not connected" }; continue;
+    }
+    try {
+      const replied = await hasMessage("from:" + e);
+      const contacted = await hasMessage("to:" + e);
+      out[key] = { replied: replied, contacted: contacted };
+    } catch (err) {
+      out[key] = { error: err.message };
+    }
+  }
+  return out;
+}
+
+/* ---------------- Live prices (optional) ----------------
+   LME/SMM official data is licensed, so this adapter pulls from a
+   provider you configure and normalizes everything to USD/tonne.
+   Providers (env PRICE_PROVIDER):
+     • metals-api  — metals-api.com, LME-* symbols (free tier available)
+     • custom      — PRICE_FEED_URL returns our normalized JSON directly
+     • mock        — sample numbers, no key/network (default in MOCK mode)
+   It caches results and refreshes at most once per PRICE_REFRESH_HOURS
+   (a daily scan), so the app can show "today's price" without burning
+   your provider quota. Calibration knobs (PRICE_INVERT / PRICE_UNIT /
+   PRICE_MULT) let you match LME exactly regardless of provider units. */
+const PRICE_PROVIDER = (process.env.PRICE_PROVIDER || (MOCK ? "mock" : "")).toLowerCase();
+const PRICE_API_KEY = process.env.PRICE_API_KEY || "";
+const PRICE_BASE = process.env.PRICE_BASE || "USD";
+const PRICE_FEED_URL_CUSTOM = process.env.PRICE_FEED_URL || "";
+const PREMIUM_FEED_URL = process.env.PREMIUM_FEED_URL || "";
+const PRICE_REFRESH_MS = Math.max(1, Number(process.env.PRICE_REFRESH_HOURS || 12)) * 3600 * 1000;
+const PRICE_INVERT = /^(1|yes|true)$/i.test(process.env.PRICE_INVERT || (PRICE_PROVIDER === "metals-api" ? "yes" : "no"));
+const PRICE_UNIT = (process.env.PRICE_UNIT || "tonne").toLowerCase();
+const UNIT_MULT = PRICE_UNIT === "lb" ? 2204.62 : (PRICE_UNIT === "oz" ? 32150.7 : 1);
+const PRICE_MULT = Number(process.env.PRICE_MULT || 1);
+const METALS_API_SYM = { copper: "LME-XCU", aluminium: "LME-ALU", zinc: "LME-ZNC", lead: "LME-LEAD", nickel: "LME-NI" };
+
+let priceCache = { data: null, ts: 0 };
+
+function calibrate(raw) {
+  if (raw == null || isNaN(raw)) return null;
+  let v = Number(raw);
+  if (PRICE_INVERT && v !== 0) v = 1 / v;
+  v = v * UNIT_MULT * PRICE_MULT;
+  return Math.round(v);
+}
+
+async function fetchMetalsApi() {
+  if (!PRICE_API_KEY) throw new Error("PRICE_API_KEY not set for metals-api.");
+  const syms = Object.values(METALS_API_SYM).join(",");
+  const url = "https://metals-api.com/api/latest?access_key=" + encodeURIComponent(PRICE_API_KEY) +
+              "&base=" + encodeURIComponent(PRICE_BASE) + "&symbols=" + encodeURIComponent(syms);
+  const r = await fetch(url);
+  const j = await r.json();
+  if (!j || j.success === false) throw new Error((j && j.error && (j.error.info || j.error.message)) || "metals-api error");
+  const rates = j.rates || {};
+  const out = { currency: PRICE_BASE, source: "Metals-API (LME, delayed)", asOf: Date.now(), delayed: true };
+  for (const metal in METALS_API_SYM) {
+    const sym = METALS_API_SYM[metal];
+    let raw = rates[sym];
+    if (raw == null) raw = rates[PRICE_BASE + sym]; // some plans key as "USDLME-XCU"
+    out[metal] = calibrate(raw);
+  }
+  return out;
+}
+
+async function fetchCustomPrices() {
+  if (!PRICE_FEED_URL_CUSTOM) throw new Error("PRICE_FEED_URL not set for custom provider.");
+  const r = await fetch(PRICE_FEED_URL_CUSTOM);
+  const j = await r.json();
+  j.asOf = j.asOf || Date.now();
+  j.source = j.source || "Custom feed";
+  return j;
+}
+
+async function fetchPremiums() {
+  if (!PREMIUM_FEED_URL) return null;
+  try {
+    const r = await fetch(PREMIUM_FEED_URL);
+    const j = await r.json();
+    return (j && (j.premiums || j)) || null; // { aluminium: 290, copper: ... } USD/MT
+  } catch (e) { console.warn("[prices] premium feed failed:", e.message); return null; }
+}
+
+function mockPrices() {
+  return {
+    copper: 9250, aluminium: 2350, zinc: 2700, lead: 2050, nickel: 16500,
+    premium: 290, premiums: { aluminium: 290 },
+    currency: "USD", source: "MOCK (sample prices)", asOf: Date.now(), delayed: true
+  };
+}
+
+async function getPrices(force) {
+  if (!force && priceCache.data && (Date.now() - priceCache.ts) < PRICE_REFRESH_MS) {
+    return Object.assign({}, priceCache.data, { cached: true });
+  }
+  let data;
+  if (PRICE_PROVIDER === "mock") data = mockPrices();
+  else if (PRICE_PROVIDER === "custom") data = await fetchCustomPrices();
+  else if (PRICE_PROVIDER === "metals-api") data = await fetchMetalsApi();
+  else throw new Error("No price provider configured. Set PRICE_PROVIDER (metals-api | custom | mock) in .env.");
+
+  const prem = await fetchPremiums();
+  if (prem) {
+    data.premiums = Object.assign({}, data.premiums || {}, prem);
+    if (prem.aluminium != null) data.premium = prem.aluminium;
+  }
+  priceCache = { data: data, ts: Date.now() };
+  return data;
+}
+
+// Daily background scan (best-effort; only when a real provider is set).
+if (PRICE_PROVIDER && PRICE_PROVIDER !== "mock") {
+  const t = setInterval(function () {
+    getPrices(true).catch(function (e) { console.warn("[prices] scheduled refresh failed:", e.message); });
+  }, PRICE_REFRESH_MS);
+  if (t.unref) t.unref();
+}
+
+/* ---------------- Team data store (optional) ----------------
+   Shares the app's whole state between teammates. File-backed
+   (.data-store.json, git-ignored), last-write-wins, with an
+   optional shared-secret token. Point every teammate's app at
+   this proxy URL and enable "Team sync" in Settings. */
+const DATA_FILE = path.join(__dirname, "..", ".data-store.json");
+const DATA_AUTH_TOKEN = process.env.DATA_AUTH_TOKEN || "";
+function loadData() {
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); } catch (e) { return { state: null, rev: 0, updatedAt: 0 }; }
+}
+function saveData(obj) {
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(obj)); } catch (e) { console.error("[data] save failed:", e.message); }
+}
+function dataAuthOK(req) {
+  if (!DATA_AUTH_TOKEN) return true;
+  return (req.headers["x-data-token"] || "") === DATA_AUTH_TOKEN;
+}
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, {});
   const path = req.url.split("?")[0];
 
   if (req.method === "GET" && path === "/health") {
-    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL });
+    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE, priceProvider: PRICE_PROVIDER || "none", teamSync: true, teamSyncProtected: !!DATA_AUTH_TOKEN });
+  }
+
+  if (req.method === "GET" && path === "/api/prices") {
+    try {
+      const force = /[?&]force=1/.test(req.url);
+      const data = await getPrices(force);
+      return send(res, 200, data);
+    } catch (e) {
+      return send(res, 400, { error: e.message });
+    }
+  }
+
+  // ---- Team data store (shared state) ----
+  if (path === "/api/data") {
+    if (!dataAuthOK(req)) return send(res, 401, { error: "Bad or missing X-Data-Token." });
+    if (req.method === "GET") {
+      return send(res, 200, loadData());
+    }
+    if (req.method === "PUT" || req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        if (!body.state || !Array.isArray(body.state.companies)) return send(res, 400, { error: "Missing/invalid state." });
+        const prev = loadData();
+        const rec = { state: body.state, rev: (prev.rev || 0) + 1, updatedAt: Date.now() };
+        saveData(rec);
+        return send(res, 200, { rev: rec.rev, updatedAt: rec.updatedAt });
+      } catch (e) {
+        return send(res, 400, { error: e.message });
+      }
+    }
+  }
+
+  // ---- Gmail OAuth + reply detection ----
+  if (req.method === "GET" && path === "/api/gmail/status") {
+    if (!HAS_GOOGLE && !MOCK) return send(res, 200, { configured: false, connected: false });
+    const tok = loadToken();
+    const connected = MOCK ? true : !!tok;
+    const email = connected && HAS_GOOGLE ? await gmailProfileEmail() : (MOCK ? "you@example.com" : "");
+    return send(res, 200, { configured: HAS_GOOGLE || MOCK, connected: connected, email: email, mock: MOCK && !HAS_GOOGLE });
+  }
+  if (req.method === "GET" && path === "/api/gmail/auth") {
+    if (!HAS_GOOGLE) return sendHtml(res, 400, "<p>Gmail is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the proxy's .env (see README).</p>");
+    res.writeHead(302, { Location: gmailAuthUrl() });
+    return res.end();
+  }
+  if (req.method === "GET" && path === "/api/gmail/callback") {
+    const q = new URLSearchParams(req.url.split("?")[1] || "");
+    const code = q.get("code");
+    if (!code) return sendHtml(res, 400, "<p>Missing authorization code.</p>");
+    try {
+      await exchangeCode(code);
+      const back = APP_RETURN_URL ? ('<p><a href="' + APP_RETURN_URL + '">Return to the app</a></p>') : "";
+      return sendHtml(res, 200, "<html><body style='font-family:sans-serif;background:#0f1620;color:#e7eef6;text-align:center;padding:60px'>" +
+        "<h2>✅ Gmail connected</h2><p>You can close this tab and click <strong>Sync Gmail</strong> in the app.</p>" + back +
+        "</body></html>");
+    } catch (e) {
+      return sendHtml(res, 400, "<p>Gmail connection failed: " + e.message + "</p>");
+    }
+  }
+  if (req.method === "POST" && path === "/api/gmail/check") {
+    try {
+      const body = await readBody(req);
+      const results = await gmailCheck(body.emails || []);
+      return send(res, 200, { results: results });
+    } catch (e) {
+      return send(res, 400, { error: e.message });
+    }
   }
 
   if (req.method === "POST" && path === "/api/find-buyers") {
@@ -280,5 +589,9 @@ server.listen(PORT, () => {
   console.log("Apollo proxy listening on http://localhost:" + PORT);
   console.log("  mode:", MOCK ? "MOCK (no real Apollo calls)" : "LIVE", "| key:", API_KEY ? "set" : "MISSING");
   console.log("  phone webhook:", WEBHOOK_BASE_URL ? (WEBHOOK_BASE_URL + "/api/apollo-webhook") : "disabled (set WEBHOOK_BASE_URL)");
-  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones");
+  console.log("  gmail:", HAS_GOOGLE ? ("configured · redirect " + GOOGLE_REDIRECT_URI) : "disabled (set GOOGLE_CLIENT_ID/SECRET)");
+  console.log("  prices:", PRICE_PROVIDER ? (PRICE_PROVIDER + " · refresh every " + (PRICE_REFRESH_MS / 3600000) + "h") : "disabled (set PRICE_PROVIDER)");
+  console.log("  team sync:", "enabled" + (DATA_AUTH_TOKEN ? " (token-protected)" : " (open — set DATA_AUTH_TOKEN to protect)"));
+  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones, GET /api/prices, GET|PUT /api/data,");
+  console.log("             GET /api/gmail/status, GET /api/gmail/auth, GET /api/gmail/callback, POST /api/gmail/check");
 });

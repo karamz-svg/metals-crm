@@ -54,12 +54,26 @@ window.App = window.App || {};
       }
     });
 
+    // Extra premiums for other metals (from a premium feed), shown after the metals.
+    var prem = p.premiums || {};
+    Object.keys(prem).forEach(function (k) {
+      if (k === "aluminium") return; // already shown next to aluminium
+      if (prem[k] == null || isNaN(prem[k])) return;
+      var label = (App.METALS[k] && App.METALS[k].label) || k;
+      chips += '<div class="chip premium">' +
+        '<span class="k">↳ ' + esc(label) + " premium</span>" +
+        '<span class="v">+' + Prices.fmt(prem[k]) + ' <small>' + esc(p.currency) + "/MT</small></span></div>";
+    });
+
+    var liveLabel = (Store.settings().autoScanPrices !== false) ? " · auto-scan daily" : "";
+    var delayed = p.delayed ? " · delayed/indicative" : "";
+
     $("pricebar").innerHTML =
       '<span class="pb-title">LME&nbsp;Board</span>' +
       '<div class="ticker">' + chips + "</div>" +
       '<div class="pb-meta">' +
-        "<span>" + esc(p.source) + " · " + esc(Prices.ageText(p.updatedAt)) + "</span>" +
-        '<button class="btn sm" data-action="refresh-prices">↻ Live</button>' +
+        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" +
+        '<button class="btn sm" data-action="refresh-prices">↻ Live now</button>' +
         '<button class="btn sm primary" data-action="edit-prices">Update prices</button>' +
       "</div>";
   }
@@ -105,6 +119,7 @@ window.App = window.App || {};
     else if (route.view === "settings") c.innerHTML = viewSettings();
     else if (route.view === "companies") c.innerHTML = viewCompanies(null);
     else if (route.view === "country") c.innerHTML = viewCompanies(route.country);
+    if (route.view === "settings") refreshGmailStatus();
     var s = c.querySelector(".search");
     if (s) s.focus();
   }
@@ -139,6 +154,7 @@ window.App = window.App || {};
     return '<div class="page-head"><div><h2>Sales Dashboard</h2>' +
       '<div class="sub">Track non-ferrous buyers across all 27 EU member states.</div></div>' +
       '<div class="spacer"></div>' +
+      '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn primary" data-action="add-company">+ Add buyer</button></div>' +
       replyBanner +
       '<div class="stat-row">' +
@@ -203,6 +219,7 @@ window.App = window.App || {};
       '<div class="spacer"></div>' +
       '<input class="search" placeholder="Search name, email, city…" value="' + esc(query) + '" oninput="App.onSearch(this.value)"/>' +
       '<button class="btn" data-action="bulk-find"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>👥 Find buyers (all)</button>' +
+      '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn" data-action="import">⇪ Import CSV</button>' +
       '<button class="btn" data-action="export">⇩ Export</button>' +
       '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>';
@@ -251,11 +268,22 @@ window.App = window.App || {};
         ? '<span class="person-mail" data-action="person-email" data-id="' + c.id + '" data-idx="' + idx + '" title="Email ' + esc(p.name) + '">✉️</span>'
         : (p.locked ? '<span class="person-locked" title="Email locked in Apollo — enable Reveal in Settings">🔒</span>' : "");
       var li = p.linkedin ? ' <a href="' + esc(p.linkedin) + '" target="_blank" rel="noopener" title="LinkedIn">in</a>' : "";
+      var thread = p.email
+        ? '<span class="person-thread" data-action="person-thread" data-id="' + c.id + '" data-idx="' + idx + '" title="Open this contact\'s Gmail thread">🔎</span>' : "";
+      var pst = p.status || "red";
+      var lights = ["red", "yellow", "green"].map(function (st) {
+        return '<button class="plight ' + st + (pst === st ? " on" : "") +
+          '" data-action="person-status" data-id="' + c.id + '" data-idx="' + idx + '" data-status="' + st + '" title="' +
+          ({ red: "Not contacted", yellow: "Awaiting reply", green: "Replied" }[st]) + '"></button>';
+      }).join("");
       return '<div class="person">' +
         '<span class="p-name">' + esc(p.name || "—") + "</span>" +
         '<span class="p-title">' + esc(p.title || "") + "</span>" +
         (p.email ? '<span class="p-email">' + esc(p.email) + "</span>" : "") +
-        '<span class="p-actions">' + mail + li +
+        (p.phone ? '<span class="p-email">📞 ' + esc(p.phone) + "</span>" : "") +
+        '<span class="p-actions">' +
+          '<span class="plights">' + lights + "</span>" +
+          mail + thread + li +
           '<span class="person-del" data-action="del-person" data-id="' + c.id + '" data-idx="' + idx + '" title="Remove">✕</span>' +
         "</span></div>";
     }).join("");
@@ -312,7 +340,7 @@ window.App = window.App || {};
         '<div class="field"><label>Extra signature lines (optional)</label><textarea data-set="signature" placeholder="Address, registration no., etc.">' + esc(s.signature || "") + "</textarea></div>" +
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button></div>' +
       "</div>" +
-      '<div class="notice warn" style="max-width:640px;margin-top:16px;">⚠️ Status is updated by you for now (one click). Automatic “replied → green” detection needs the Gmail API + a small backend — see the README for the upgrade path.</div>' +
+      '<div class="notice warn" style="max-width:640px;margin-top:16px;">💡 Statuses can be set manually (click a light) or synced automatically from Gmail (below). Sending always goes through the review-first Gmail compose button.</div>' +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>👥 Apollo.io contact finder</h3>' +
         '<div class="meta">Your Apollo key lives only in the proxy\'s <span class="kbd">.env</span> file — never in the browser or GitHub. Start it with <span class="kbd">node server/apollo-proxy.js</span> (see README).</div>' +
         '<div class="field" style="margin-top:10px;"><label>Apollo proxy URL</label><input data-set="apolloProxyUrl" value="' + esc(s.apolloProxyUrl || "") + '" placeholder="http://localhost:8787"/></div>' +
@@ -321,13 +349,38 @@ window.App = window.App || {};
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
           '<button class="btn" data-action="test-proxy">Test proxy connection</button></div>' +
       "</div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>📥 Gmail auto-status</h3>' +
+        '<div class="meta">Connect your Gmail (read-only) so the app can set 🟡 when you\'ve emailed a buyer and 🟢 when they reply. Requires Google OAuth credentials in the proxy\'s <span class="kbd">.env</span> (see README).</div>' +
+        '<div id="gmail-status" class="meta" style="margin-top:10px;">Checking connection…</div>' +
+        '<div class="btn-row" style="margin-top:10px;">' +
+          '<button class="btn primary" data-action="connect-gmail">Connect Gmail</button>' +
+          '<button class="btn" data-action="sync-gmail">📥 Sync now</button>' +
+        "</div></div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>💱 Live prices</h3>' +
+        '<div class="meta">Prices show on the bar at the top of every page and feed into each email. ' +
+        'Choose a provider in the proxy\'s <span class="kbd">.env</span> (<span class="kbd">PRICE_PROVIDER</span>, e.g. metals-api + key) — see README. ' +
+        'You can always enter prices manually via <strong>Update prices</strong> on the bar.</div>' +
+        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + "</div>" +
+        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
+        '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
+          '<button class="btn" data-action="refresh-prices">↻ Fetch prices now</button></div>' +
+      "</div>" +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>Data</h3>' +
         '<div class="meta">Back up or move your buyer list between devices.</div>' +
         '<div class="btn-row" style="margin-top:10px;">' +
           '<button class="btn" data-action="import">⇪ Import CSV / JSON</button>' +
           '<button class="btn" data-action="export">⇩ Export backup (JSON)</button>' +
           '<button class="btn danger" data-action="reset">Reset all data</button>' +
-        "</div></div>";
+        "</div></div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>👥 Team sync (shared data)</h3>' +
+        '<div class="meta">Share buyers, statuses and prices with teammates via the proxy. Everyone points at the same proxy URL and turns this on. Last-write-wins — click <strong>Pull</strong> to grab the latest before a big edit. Protect it with a token (proxy <span class="kbd">DATA_AUTH_TOKEN</span>).</div>' +
+        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="teamSync"' + (s.teamSync ? " checked" : "") + '> Enable team sync</label>' +
+        '<div class="field"><label>Sync server URL (blank = use the Apollo proxy URL above)</label><input data-set="syncServerUrl" value="' + esc(s.syncServerUrl || "") + '" placeholder="http://localhost:8787"/></div>' +
+        '<div class="field"><label>Shared token (optional)</label><input data-set="syncToken" value="' + esc(s.syncToken || "") + '" placeholder="matches proxy DATA_AUTH_TOKEN"/></div>' +
+        '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
+          '<button class="btn" data-action="team-pull">⬇ Pull from team</button>' +
+          '<button class="btn" data-action="team-push">⬆ Push to team</button></div>' +
+      "</div>";
   }
 
   /* =========================================================
@@ -404,7 +457,10 @@ window.App = window.App || {};
 
   function importForm() {
     var body =
-      '<div class="notice">Paste <strong>CSV</strong> (with a header row) or a previously exported <strong>JSON</strong> backup.</div>' +
+      '<div class="notice">📋 New here? <strong>Load the EU starter list</strong> — ' + (App.EU_SEED ? App.EU_SEED.length : 0) +
+      ' real EU non-ferrous producers & recyclers as research leads, then use <strong>👥 Find buyers</strong> to pull their contacts.' +
+      '<div style="margin-top:8px;"><button class="btn primary sm" data-action="load-eu-seed">Load EU starter list</button></div></div>' +
+      '<div class="notice">Or paste <strong>CSV</strong> (with a header row) or a previously exported <strong>JSON</strong> backup.</div>' +
       '<div class="meta" style="margin-bottom:8px;">CSV columns recognised: <span class="kbd">name</span> <span class="kbd">country</span> <span class="kbd">city</span> ' +
       '<span class="kbd">contact</span> <span class="kbd">email</span> <span class="kbd">phone</span> <span class="kbd">website</span> ' +
       '<span class="kbd">materials</span> <span class="kbd">notes</span>. ' +
@@ -479,6 +535,69 @@ window.App = window.App || {};
       });
     }
     step();
+  }
+
+  /* Collect every email address tied to a company (primary + discovered people). */
+  function companyEmails(c) {
+    var set = {};
+    if (c.email) set[c.email.toLowerCase()] = 1;
+    (c.people || []).forEach(function (p) { if (p.email) set[p.email.toLowerCase()] = 1; });
+    return Object.keys(set);
+  }
+
+  /* Sync traffic-light status from Gmail: reply -> green, contacted -> yellow. */
+  function syncGmail() {
+    var companies = Store.companies();
+    var emails = [];
+    companies.forEach(function (c) { emails = emails.concat(companyEmails(c)); });
+    emails = emails.filter(function (e, i) { return emails.indexOf(e) === i; });
+    if (!emails.length) { toast("No buyer emails yet — add or find contacts first."); return; }
+
+    toast("Syncing with Gmail…");
+    App.Gmail.check(emails).then(function (results) {
+      // detect "not connected" responses
+      var notConnected = emails.every(function (e) {
+        var r = results[e]; return r && r.error && /not connected|not configured/i.test(r.error);
+      });
+      if (notConnected) {
+        toast("Gmail isn't connected yet — open Settings → Connect Gmail.");
+        return;
+      }
+      var greens = 0, yellows = 0;
+      companies.forEach(function (c) {
+        // Update each discovered contact individually first.
+        (c.people || []).forEach(function (p, idx) {
+          if (!p.email) return;
+          var r = results[p.email.toLowerCase()];
+          if (!r) return;
+          if (r.replied && p.status !== "green") { Store.setPersonStatus(c.id, idx, "green", { lastReplyAt: Date.now() }); }
+          else if (r.contacted && (p.status || "red") === "red") { Store.setPersonStatus(c.id, idx, "yellow", { lastEmailAt: p.lastEmailAt || Date.now() }); }
+        });
+        // Then the company headline (its own primary email, or rolled up from people).
+        var mine = companyEmails(c);
+        var replied = mine.some(function (e) { return results[e] && results[e].replied; });
+        var contacted = mine.some(function (e) { return results[e] && results[e].contacted; });
+        if (replied) {
+          if (c.status !== "green") { Store.setStatus(c.id, "green", { lastReplyAt: Date.now() }); greens++; }
+        } else if (contacted && c.status === "red") {
+          Store.setStatus(c.id, "yellow", { lastEmailAt: c.lastEmailAt || Date.now() }); yellows++;
+        }
+      });
+      render();
+      toast("Gmail synced — " + greens + " new reply(ies) 🟢, " + yellows + " marked awaiting 🟡.");
+    }).catch(function (err) { toast(err.message); });
+  }
+
+  /* Settings: show the current Gmail connection state. */
+  function refreshGmailStatus() {
+    var el = document.getElementById("gmail-status");
+    if (!el) return;
+    App.Gmail.status().then(function (s) {
+      if (s.unreachable) el.innerHTML = "⚪ Proxy not reachable — start it to use Gmail sync.";
+      else if (!s.configured) el.innerHTML = "⚪ Not configured — add Google OAuth credentials to the proxy's .env (see README).";
+      else if (s.connected) el.innerHTML = "🟢 Connected" + (s.email ? " as <strong>" + esc(s.email) + "</strong>" : "") + (s.mock ? " (mock)" : "");
+      else el.innerHTML = "🟡 Configured but not connected — click “Connect Gmail”.";
+    });
   }
 
   /* =========================================================
@@ -610,14 +729,11 @@ window.App = window.App || {};
         break;
       }
       case "refresh-prices":
-        toast("Fetching live feed…");
-        Prices.fetchLive().then(function (d) {
-          ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (k) {
-            if (d[k] != null) Store.setPriceRow(k, { value: Number(d[k]) });
-          });
-          if (d.premium != null) Store.setPriceRow("aluminium", { premium: Number(d.premium) });
-          Store.updatePrices({ source: d.source || "Live feed" });
-          render(); toast("Live prices loaded.");
+        toast("Scanning live prices…");
+        Prices.fetchLive(true).then(function (d) {
+          Store.applyPriceFeed(d);
+          render();
+          toast("Live prices loaded (" + (d.source || "feed") + ").");
         }).catch(function (err) {
           toast(err.message);
         });
@@ -663,11 +779,25 @@ window.App = window.App || {};
       }
 
       case "person-email": {
-        var person = (company.people || [])[Number(a.getAttribute("data-idx"))];
+        var pidx = Number(a.getAttribute("data-idx"));
+        var person = (company.people || [])[pidx];
         if (!person || !person.email) { toast("No email for this person."); break; }
         window.open(Email.composeUrl(company, person), "_blank");
-        if (company.status === "red") Store.setStatus(id, "yellow", { lastEmailAt: Date.now() });
+        if ((person.status || "red") === "red") Store.setPersonStatus(id, pidx, "yellow", { lastEmailAt: Date.now() });
         render(); toast("Opened Gmail to " + person.name + ".");
+        break;
+      }
+
+      case "person-status":
+        Store.setPersonStatus(id, Number(a.getAttribute("data-idx")), a.getAttribute("data-status"),
+          a.getAttribute("data-status") === "yellow" ? { lastEmailAt: Date.now() } :
+          a.getAttribute("data-status") === "green" ? { lastReplyAt: Date.now() } : {});
+        render();
+        break;
+
+      case "person-thread": {
+        var tp = (company.people || [])[Number(a.getAttribute("data-idx"))];
+        if (tp && tp.email) window.open(Email.threadUrl({ email: tp.email, name: tp.name }), "_blank");
         break;
       }
 
@@ -691,7 +821,38 @@ window.App = window.App || {};
         break;
       }
 
+      case "connect-gmail":
+        window.open(App.Gmail.connectUrl(), "_blank");
+        toast("Connect Gmail in the new tab, then click “Sync now”.");
+        break;
+
+      case "sync-gmail":
+        syncGmail();
+        break;
+
+      case "team-pull":
+        if (!App.Sync.enabled()) { toast("Enable team sync first (and Save)."); break; }
+        toast("Pulling team data…");
+        App.Sync.pull().then(function (j) {
+          if (j && j.state && Store.applyRemote(j)) { render(); toast("Pulled latest team data."); }
+          else toast("No shared data on the server yet — push first.");
+        }).catch(function (e) { toast(e.message); });
+        break;
+
+      case "team-push":
+        if (!App.Sync.enabled()) { toast("Enable team sync first (and Save)."); break; }
+        toast("Pushing to team…");
+        App.Sync.push().then(function (j) { toast("Pushed (rev " + (j.rev || "?") + ")."); })
+          .catch(function (e) { toast(e.message); });
+        break;
+
       case "import": importForm(); break;
+      case "load-eu-seed": {
+        var added = Store.importSeed(App.EU_SEED || []);
+        closeModal(); render();
+        toast(added ? (added + " starter companies loaded — now run “Find buyers”.") : "Starter list already loaded.");
+        break;
+      }
       case "do-import": {
         var txt = $("import-text").value.trim();
         if (!txt) { toast("Paste some data first."); break; }
@@ -732,8 +893,28 @@ window.App = window.App || {};
     }
   };
 
+  /* Auto-scan live prices ~once/day on load (if a provider is configured).
+     Silent: no error toast when there's no feed/proxy. */
+  function autoScanPrices() {
+    if (Store.settings().autoScanPrices === false) return;
+    var p = Store.prices();
+    var age = Date.now() - (p.updatedAt || 0);
+    if (p.updatedAt && age < 12 * 3600 * 1000) return; // already fresh today
+    Prices.fetchLive().then(function (d) {
+      if (d && (d.copper != null || d.aluminium != null || d.zinc != null)) {
+        Store.applyPriceFeed(d);
+        renderPriceBar();
+      }
+    }).catch(function () { /* silent — no provider/proxy configured yet */ });
+  }
+
   /* boot */
-  document.addEventListener("DOMContentLoaded", render);
-  if (document.readyState !== "loading") render();
+  function boot() {
+    render();
+    setTimeout(autoScanPrices, 700);
+    if (App.Sync) App.Sync.init(function () { render(); toast("Pulled latest team data."); });
+  }
+  document.addEventListener("DOMContentLoaded", boot);
+  if (document.readyState !== "loading") boot();
 
 })(window.App);

@@ -3,6 +3,12 @@
 .env.local
 *.key
 
+# Gmail OAuth token cache (contains access/refresh tokens)
+.gmail-token.json
+
+# Team-sync shared data store
+.data-store.json
+
 # Node
 node_modules/
 npm-debug.log*
