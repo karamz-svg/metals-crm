@@ -11,6 +11,8 @@ window.App = window.App || {};
   /* in-memory view state */
   var route = { view: "dashboard", country: null };
   var query = "";
+  var filterStatus = "";   // "", red, yellow, green
+  var filterMetal = "";    // "", or a product metal key
 
   /* ---------- tiny helpers ---------- */
   function esc(s) {
@@ -37,6 +39,7 @@ window.App = window.App || {};
      ========================================================= */
   function renderPriceBar() {
     var p = Store.prices();
+    var ccy = Store.settings().displayCurrency || "USD";
     var dateStr = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—";
 
     function changeHtml(row) {
@@ -56,20 +59,22 @@ window.App = window.App || {};
       } else {
         val = row.value;
         chg = changeHtml(row);
-        sub = esc(p.currency) + " " + esc(t.unit) + " · " + esc(dateStr);
+        sub = ccy + " " + esc(t.unit) + " · " + esc(dateStr);
         var pct = Prices.changePct(row);
         spark = Prices.sparkline(row.series, pct == null ? null : (pct >= 0 ? "#46d07f" : "#ef5a5a"));
       }
-      var priceTxt = (val == null) ? "—" : "$" + Prices.fmt(val);
       return '<div class="tk">' +
         '<div class="tk-label">' + esc(t.label) + "</div>" +
-        '<div class="tk-price">' + priceTxt + chg + "</div>" +
+        '<div class="tk-price">' + Prices.money(val) + chg + "</div>" +
         '<div class="tk-foot">' + (spark || '<span class="tk-spark-empty"></span>') + '<span class="tk-sub">' + sub + "</span></div>" +
       "</div>";
     }).join("");
 
     var live = Store.settings().priceLiveSeconds > 0 ? '<span class="tk-live">● LIVE</span>' : "";
     var delayed = p.delayed ? "delayed/indicative" : "manual";
+    var noFx = (ccy === "EUR" && !p.fx);
+    var ccyToggle = '<button class="btn sm" data-action="toggle-currency" title="Switch USD / EUR">' +
+      (ccy === "EUR" ? "€ EUR" : "$ USD") + (noFx ? " ⚠️" : "") + "</button>";
     var warn = App.priceMsg
       ? '<span class="price-warn" data-nav="settings" title="Open price settings">⚠️ ' + esc(App.priceMsg) + "</span>"
       : (!p.updatedAt ? '<span class="price-warn" data-nav="settings">⚠️ set up live prices</span>' : "");
@@ -77,7 +82,7 @@ window.App = window.App || {};
     $("pricebar").innerHTML =
       '<div class="ticker">' + cards + "</div>" +
       '<div class="pb-meta">' + live +
-        "<span>" + esc(p.source) + " · " + esc(delayed) + "</span>" + warn +
+        "<span>" + esc(p.source) + " · " + esc(delayed) + "</span>" + warn + ccyToggle +
         '<button class="btn sm" data-action="refresh-prices">↻ Refresh</button>' +
         '<button class="btn sm primary" data-action="edit-prices">Edit</button>' +
       "</div>";
@@ -140,6 +145,12 @@ window.App = window.App || {};
   App.render = render;
 
   /* ---- Dashboard ---- */
+  function buyersBuyingMetal(rowKey) {
+    var metalKey = rowKey === "nickel" ? "stainless" : rowKey;
+    return Store.companies().filter(function (c) {
+      return (c.materials || []).some(function (id) { var p = App.productById(id); return p && p.metal === metalKey; });
+    });
+  }
   function viewDashboard() {
     var all = Store.companies();
     var red = all.filter(function (c) { return c.status === "red"; }).length;
@@ -167,17 +178,59 @@ window.App = window.App || {};
         '<span class="mini-lights">' + dots + "</span></div>";
     }).join("");
 
+    var contacted = yellow + green;
+    var total = all.length || 1;
+    var contactRate = Math.round(contacted / total * 100);
+    var replyRate = contacted ? Math.round(green / contacted * 100) : 0;
+
+    // Follow-up reminders: stuck on 'awaiting reply' beyond the threshold.
+    var followDays = Number(Store.settings().followUpDays) || 4;
+    var now = Date.now();
+    var followUps = all.filter(function (c) { return c.status === "yellow" && c.lastEmailAt && (now - c.lastEmailAt) > followDays * 86400000; });
+    var followHtml = followUps.length
+      ? '<div class="card" style="margin-bottom:16px;"><h3>⏰ Needs follow-up (' + followUps.length + ")</h3>" +
+        '<div class="meta">No reply after ' + followDays + " days — give them a nudge.</div><div class=\"followups\">" +
+        followUps.slice(0, 15).map(function (c) {
+          var days = Math.floor((now - c.lastEmailAt) / 86400000);
+          return '<div class="fu"><span class="fu-name" data-nav="country:' + c.country + '">' + esc(c.name) + "</span>" +
+            '<span class="fu-days">' + days + "d</span>" +
+            '<button class="btn sm primary" data-action="send-email" data-id="' + c.id + '">✉️ Follow up</button></div>';
+        }).join("") + "</div></div>"
+      : "";
+
+    // Price-move alerts: metals that moved more than the alert threshold.
+    var alertPct = Number(Store.settings().alertPct) || 2;
+    var pr = Store.prices();
+    var moves = [];
+    ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (mk) {
+      var pct = Prices.changePct(pr.rows[mk]);
+      if (pct != null && Math.abs(pct) >= alertPct) moves.push({ key: mk, pct: pct });
+    });
+    var alertHtml = moves.length
+      ? '<div class="notice warn" style="margin-bottom:16px;">📈 <strong>Market moves</strong> — act on these: ' +
+        moves.map(function (m) {
+          var pm = m.key === "nickel" ? "stainless" : m.key;
+          var n = buyersBuyingMetal(m.key).length;
+          var arrow = m.pct >= 0 ? "▲" : "▼";
+          var lbl = (App.METALS[m.key === "nickel" ? "stainless" : m.key] || {}).label || m.key;
+          return '<span class="alert-chip" data-action="alert-filter" data-metal="' + pm + '">' +
+            esc(lbl) + " " + arrow + Math.abs(m.pct).toFixed(1) + "% · " + n + " buyers</span>";
+        }).join(" ") + "</div>"
+      : "";
+
     return '<div class="page-head"><div><h2>Sales Dashboard</h2>' +
       '<div class="sub">Track non-ferrous buyers across all 27 EU member states.</div></div>' +
       '<div class="spacer"></div>' +
       '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn primary" data-action="add-company">+ Add buyer</button></div>' +
-      replyBanner +
+      replyBanner + alertHtml + followHtml +
       '<div class="stat-row">' +
         stat(all.length, "Total buyers") +
         statDot(red, "Not contacted", "red") +
         statDot(yellow, "Awaiting reply", "yellow") +
         statDot(green, "Replied", "green") +
+        stat(contactRate + "%", "Contacted") +
+        stat(replyRate + "%", "Reply rate") +
       "</div>" +
       '<h3 style="margin:6px 0 12px;">Coverage by country</h3>' +
       '<div class="tiles">' + tiles + "</div>";
@@ -263,6 +316,21 @@ window.App = window.App || {};
                (x.city || "").toLowerCase().indexOf(q) !== -1;
       });
     }
+    if (filterStatus) list = list.filter(function (x) { return (x.status || "red") === filterStatus; });
+    if (filterMetal) list = list.filter(function (x) {
+      return (x.materials || []).some(function (id) { var pp = App.productById(id); return pp && pp.metal === filterMetal; });
+    });
+
+    var statusOpts = [["", "All statuses"], ["red", "🔴 Not contacted"], ["yellow", "🟡 Awaiting reply"], ["green", "🟢 Replied"]]
+      .map(function (o) { return '<option value="' + o[0] + '"' + (filterStatus === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("");
+    var metalOpts = '<option value="">All materials</option>' + Object.keys(App.METALS).map(function (mk) {
+      return '<option value="' + mk + '"' + (filterMetal === mk ? " selected" : "") + ">" + esc(App.METALS[mk].label) + "</option>";
+    }).join("");
+    var filtersBar = '<div class="filters">' +
+      '<select class="search" onchange="App.onFilter(\'status\',this.value)">' + statusOpts + "</select>" +
+      '<select class="search" onchange="App.onFilter(\'metal\',this.value)">' + metalOpts + "</select>" +
+      ((filterStatus || filterMetal) ? '<button class="btn sm" data-action="clear-filters">✕ Clear filters</button>' : "") +
+      '<span class="status-text">' + list.length + " shown</span></div>";
 
     var head = '<div class="page-head"><div><h2>' + esc(title) + "</h2>" +
       '<div class="sub">' + esc(sub) + "</div></div>" +
@@ -275,7 +343,8 @@ window.App = window.App || {};
       '<button class="btn" data-action="export">⇩ Export</button>' +
       ((countryCode && App.countryByCode(countryCode) && App.countryByCode(countryCode).custom)
         ? '<button class="btn danger" data-action="remove-country" data-country="' + countryCode + '">🗑 Remove country</button>' : "") +
-      '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>';
+      '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>' +
+      filtersBar;
 
     var legend = '<div class="legend" style="margin-bottom:14px;">' +
       '<span><span class="dot" style="background:var(--red)"></span>Not contacted</span>' +
@@ -365,6 +434,7 @@ window.App = window.App || {};
       "</div>" +
       '<div class="card-actions">' +
         '<button class="btn primary sm" data-action="send-email" data-id="' + c.id + '">✉️ Send email</button>' +
+        '<button class="btn sm" data-action="make-offer" data-id="' + c.id + '">💰 Offer</button>' +
         '<button class="btn sm" data-action="find-buyers" data-id="' + c.id + '">👥 Find buyers</button>' +
         '<button class="btn sm" data-action="open-thread" data-id="' + c.id + '">🔎 View thread</button>' +
         '<button class="btn sm" data-action="edit-company" data-id="' + c.id + '">✎ Edit</button>' +
@@ -443,6 +513,21 @@ window.App = window.App || {};
           '<button class="btn" data-action="export">⇩ Export backup (JSON)</button>' +
           '<button class="btn danger" data-action="reset">Reset all data</button>' +
         "</div></div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>📊 Offer margins</h3>' +
+        '<div class="meta">Your margin % over the live metal price, used by the offer generator. Use negative values for scrap discounts.</div>' +
+        '<div class="margins">' + App.PRODUCTS.map(function (pp) {
+          var v = (s.margins && s.margins[pp.id] != null) ? s.margins[pp.id] : "";
+          return '<label class="mg"><span>' + esc(pp.name) + '</span><input type="number" step="0.1" data-margin="' + pp.id + '" value="' + esc(v) + '" placeholder="0"/></label>';
+        }).join("") + "</div>" +
+        '<div class="btn-row" style="margin-top:10px;"><button class="btn primary" data-action="save-settings">Save settings</button></div></div>' +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>✉️ Email templates</h3>' +
+        '<div class="meta">Used by the Send email button. Placeholders: <span class="kbd">{{contact}}</span> <span class="kbd">{{company}}</span> <span class="kbd">{{products}}</span> <span class="kbd">{{prices}}</span> <span class="kbd">{{me}}</span> <span class="kbd">{{myCompany}}</span>.</div>' +
+        '<div class="field" style="margin-top:10px;"><label>Default template</label><select data-set="defaultTemplateId"><option value="">Built-in default</option>' +
+          s.templates.map(function (t) { return '<option value="' + t.id + '"' + (s.defaultTemplateId === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>"; }).join("") + "</select></div>" +
+        '<div class="tpl-list">' + (s.templates.length ? s.templates.map(function (t) {
+          return '<div class="tpl"><span>' + esc(t.name) + '</span><span class="p-actions"><button class="btn sm" data-action="edit-template" data-id="' + t.id + '">✎ Edit</button><button class="btn sm danger" data-action="del-template" data-id="' + t.id + '">🗑</button></span></div>';
+        }).join("") : '<div class="status-text">No templates yet — the built-in pitch is used.</div>') + "</div>" +
+        '<div class="btn-row" style="margin-top:10px;"><button class="btn" data-action="add-template">+ Add template</button><button class="btn primary" data-action="save-settings">Save settings</button></div></div>' +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>👥 Team sync (shared data)</h3>' +
         '<div class="meta">Share buyers, statuses and prices with teammates via the proxy. Everyone points at the same proxy URL and turns this on. Last-write-wins — click <strong>Pull</strong> to grab the latest before a big edit. Protect it with a token (proxy <span class="kbd">DATA_AUTH_TOKEN</span>).</div>' +
         '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="teamSync"' + (s.teamSync ? " checked" : "") + '> Enable team sync</label>' +
@@ -496,7 +581,13 @@ window.App = window.App || {};
       '<div class="field-2">' + fld("contactName", "Contact person", "Procurement") + fld("email", "Email", "buyer@company.com") + "</div>" +
       '<div class="field-2">' + fld("phone", "Phone", "+49 …") + fld("website", "Website", "company.com") + "</div>" +
       '<div class="field"><label>Materials they buy from you</label><div class="checks">' + checks + "</div></div>" +
-      '<div class="field"><label>Notes</label><textarea data-f="notes" placeholder="Volumes, terms, history…">' + esc(c.notes || "") + "</textarea></div>";
+      '<div class="field"><label>Notes</label><textarea data-f="notes" placeholder="Volumes, terms, history…">' + esc(c.notes || "") + "</textarea></div>" +
+      ((isEdit && c.activity && c.activity.length)
+        ? '<div class="field"><label>Activity timeline</label><div class="timeline">' +
+          c.activity.slice(0, 15).map(function (a) {
+            return '<div class="tl"><span class="tl-date">' + esc(new Date(a.ts).toLocaleString()) + "</span> " + esc(a.text) + "</div>";
+          }).join("") + "</div></div>"
+        : "");
 
     var footer =
       '<button class="btn" data-action="close-modal">Cancel</button>' +
@@ -515,6 +606,115 @@ window.App = window.App || {};
     var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
       '<button class="btn primary" data-action="save-country">Add country</button>';
     openModal("Add a country", body, footer);
+  }
+
+  function templateForm(t) {
+    t = t || {};
+    var body =
+      '<div class="field"><label>Template name</label><input data-tf="name" value="' + esc(t.name || "") + '" placeholder="Intro / Follow-up / Price alert"/></div>' +
+      '<div class="field"><label>Subject</label><input data-tf="subject" value="' + esc(t.subject || "") + '" placeholder="{{myCompany}} — {{products}}"/></div>' +
+      '<div class="field"><label>Body</label><textarea data-tf="body" style="min-height:200px" placeholder="Dear {{contact}}, …">' + esc(t.body || "") + "</textarea></div>" +
+      '<div class="meta">Placeholders: <span class="kbd">{{contact}}</span> <span class="kbd">{{company}}</span> <span class="kbd">{{products}}</span> <span class="kbd">{{prices}}</span> <span class="kbd">{{me}}</span> <span class="kbd">{{myCompany}}</span></div>';
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      '<button class="btn primary" data-action="save-template" data-id="' + (t.id || "") + '">Save template</button>';
+    openModal(t.id ? "Edit template" : "Add template", body, footer);
+  }
+
+  /* ---- Offer / quote generator ---- */
+  function productBaseUSD(p) {
+    var pr = Store.prices();
+    if (!p) return null;
+    if (p.metal === "stainless") return pr.rows.nickel && pr.rows.nickel.value;
+    if (p.metal === "brass") return Prices.brassIndicative(pr);
+    if (p.metal === "iron") return null;
+    return pr.rows[p.metal] && pr.rows[p.metal].value;
+  }
+  function productOfferUnitUSD(p) {
+    var base = productBaseUSD(p);
+    if (base == null) return null;
+    var marginPct = Number((Store.settings().margins || {})[p.id] || 0);
+    var unit = base * (1 + marginPct / 100);
+    if (p.metal === "aluminium") {
+      var prem = Store.prices().rows.aluminium && Store.prices().rows.aluminium.premium;
+      if (prem) unit += Number(prem);
+    }
+    return Math.round(unit);
+  }
+
+  function offerForm(c) {
+    var mats = (c.materials || []).map(function (id) { return App.productById(id); }).filter(Boolean);
+    var rowsHtml = mats.length ? mats.map(function (p) {
+      var unit = productOfferUnitUSD(p);
+      return '<tr data-pid="' + p.id + '">' +
+        "<td>" + esc(p.name) + "</td>" +
+        '<td><input type="number" class="q" min="0" value="25" data-up="' + (unit == null ? "" : unit) + '" oninput="App.recalcOffer()" style="width:90px"/></td>' +
+        '<td class="up">' + (unit == null ? "—" : Prices.money(unit)) + "</td>" +
+        '<td class="lt">' + (unit == null ? "—" : Prices.money(unit * 25)) + "</td>" +
+        "</tr>";
+    }).join("") : '<tr><td colspan="4" class="status-text">No materials assigned — add some via Edit, then make an offer.</td></tr>';
+
+    var incoOpts = ["CIF", "FOB", "CFR", "EXW", "DAP"].map(function (i) { return '<option value="' + i + '">' + i + "</option>"; }).join("");
+    var body =
+      '<div class="meta" style="margin-bottom:8px;">Prices = live metal price + your margin (set margins in Settings). Edit qty; review, then print or email. Currency: <strong>' + (Store.settings().displayCurrency || "USD") + "</strong>.</div>" +
+      '<table class="sheet offer"><thead><tr><th>Product</th><th>Qty (MT)</th><th>Unit</th><th>Line total</th></tr></thead><tbody>' + rowsHtml + "</tbody>" +
+      '<tfoot><tr><td colspan="3" style="text-align:right;font-weight:700">Total</td><td id="offer-grand" style="font-weight:700"></td></tr></tfoot></table>' +
+      '<div class="field-2" style="margin-top:12px;">' +
+        '<div class="field"><label>Incoterm</label><select id="offer-inco">' + incoOpts + "</select></div>" +
+        '<div class="field"><label>Delivery port</label><input id="offer-port" placeholder="e.g. Rotterdam"/></div>' +
+      "</div>" +
+      '<div class="field-2">' +
+        '<div class="field"><label>Validity</label><input id="offer-valid" value="7 days" /></div>' +
+        '<div class="field"><label>Payment</label><input id="offer-pay" value="TT / LC at sight" /></div>' +
+      "</div>" +
+      '<div class="field"><label>Notes</label><input id="offer-notes" placeholder="Inspection: SGS; packing: …"/></div>';
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      '<button class="btn" data-action="print-offer" data-id="' + c.id + '">🖨 Print / PDF</button>' +
+      '<button class="btn primary" data-action="email-offer" data-id="' + c.id + '">✉️ Email offer</button>';
+    openModal("💰 Offer — " + (c.name || "buyer"), body, footer);
+    setTimeout(App.recalcOffer, 0);
+  }
+
+  App.recalcOffer = function () {
+    var modal = document.querySelector(".modal");
+    if (!modal) return;
+    var grandUSD = 0;
+    modal.querySelectorAll("tbody tr[data-pid]").forEach(function (tr) {
+      var inp = tr.querySelector(".q"); if (!inp) return;
+      var unit = Number(inp.getAttribute("data-up"));
+      var qty = Number(inp.value) || 0;
+      if (!isNaN(unit) && inp.getAttribute("data-up") !== "") {
+        tr.querySelector(".lt").textContent = Prices.money(unit * qty);
+        grandUSD += unit * qty;
+      }
+    });
+    var g = modal.querySelector("#offer-grand"); if (g) g.textContent = Prices.money(grandUSD);
+  };
+
+  function readOffer(modal) {
+    var lines = [];
+    modal.querySelectorAll("tbody tr[data-pid]").forEach(function (tr) {
+      var inp = tr.querySelector(".q"); if (!inp || inp.getAttribute("data-up") === "") return;
+      var p = App.productById(tr.getAttribute("data-pid"));
+      var unit = Number(inp.getAttribute("data-up")); var qty = Number(inp.value) || 0;
+      lines.push({ name: p ? p.name : "", qty: qty, unit: unit, total: unit * qty });
+    });
+    return {
+      lines: lines,
+      inco: (modal.querySelector("#offer-inco") || {}).value || "",
+      port: (modal.querySelector("#offer-port") || {}).value || "",
+      validity: (modal.querySelector("#offer-valid") || {}).value || "",
+      payment: (modal.querySelector("#offer-pay") || {}).value || "",
+      notes: (modal.querySelector("#offer-notes") || {}).value || ""
+    };
+  }
+
+  function offerLinesText(o) {
+    var sym = Prices.currencySymbol();
+    var rows = o.lines.map(function (l) {
+      return "  • " + l.name + " — " + l.qty + " MT @ " + sym + Prices.fmt(Prices.toDisplay(l.unit)) + "/MT = " + sym + Prices.fmt(Prices.toDisplay(l.total));
+    }).join("\n");
+    var grand = o.lines.reduce(function (a, l) { return a + l.total; }, 0);
+    return { rows: rows, grand: sym + Prices.fmt(Prices.toDisplay(grand)) };
   }
 
   function pricesForm() {
@@ -754,7 +954,7 @@ window.App = window.App || {};
       var nav = t.getAttribute("data-nav");
       if (nav.indexOf("country:") === 0) { route = { view: "country", country: nav.split(":")[1] }; }
       else { route = { view: nav, country: null }; }
-      query = "";
+      query = ""; filterStatus = ""; filterMetal = "";
       render();
       return;
     }
@@ -823,6 +1023,7 @@ window.App = window.App || {};
         if (st === "yellow") extra.lastEmailAt = company.lastEmailAt || Date.now();
         if (st === "green") extra.lastReplyAt = Date.now();
         Store.setStatus(id, st, extra);
+        Store.logActivity(id, "status", "Status set to " + st);
         render();
         break;
       }
@@ -830,8 +1031,9 @@ window.App = window.App || {};
       case "send-email": {
         if (!company.email) { toast("Add an email address first (Edit)."); break; }
         window.open(Email.composeUrl(company), "_blank");
-        // opening the composer = you're contacting them → move to "awaiting reply"
-        if (company.status === "red") Store.setStatus(id, "yellow", { lastEmailAt: Date.now(), lastEmailSubject: Email.buildDraft(company).subject });
+        Store.updateCompany(id, { lastEmailAt: Date.now(), lastEmailSubject: Email.buildDraft(company).subject });
+        if (company.status === "red") Store.setStatus(id, "yellow", {});
+        Store.logActivity(id, "email", "Email drafted to " + company.email);
         render();
         toast("Opened Gmail with a pre-written email. Review & send.");
         break;
@@ -858,6 +1060,87 @@ window.App = window.App || {};
         closeModal(); render(); toast("Prices updated.");
         break;
       }
+      case "clear-filters":
+        filterStatus = ""; filterMetal = ""; render();
+        break;
+
+      case "alert-filter":
+        filterMetal = a.getAttribute("data-metal") || "";
+        filterStatus = "";
+        route = { view: "companies", country: null };
+        render();
+        break;
+
+      case "make-offer": offerForm(company); break;
+
+      case "email-offer": {
+        var mo = a.closest(".modal");
+        var o = readOffer(mo);
+        if (!o.lines.length) { toast("No priced products to offer."); break; }
+        var s = Store.settings();
+        var lt = offerLinesText(o);
+        var greeting = company.contactName ? "Dear " + (company.contactName.split(/\s+/)[0]) + "," : "Dear Sir or Madam,";
+        var subject = s.companyName + " — offer for " + company.name;
+        var bodyTxt = greeting + "\n\nPlease find our offer below:\n\n" + lt.rows +
+          "\n\nTotal: " + lt.grand +
+          "\nTerms: " + o.inco + (o.port ? " " + o.port : "") + " · Validity: " + o.validity + " · Payment: " + o.payment +
+          (o.notes ? "\nNotes: " + o.notes : "") +
+          "\n\nPrices are formula-linked to the prevailing LME and confirmed at contract.\n\nBest regards,\n" +
+          s.senderName + (s.senderTitle ? "\n" + s.senderTitle : "") + "\n" + s.companyName + (s.phone ? "\nTel: " + s.phone : "");
+        var url = "https://mail.google.com/mail/?view=cm&fs=1&to=" + encodeURIComponent(company.email || "") +
+          "&su=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(bodyTxt);
+        window.open(url, "_blank");
+        Store.updateCompany(id, { lastEmailAt: Date.now() });
+        if (company.status === "red") Store.setStatus(id, "yellow", {});
+        Store.logActivity(id, "offer", "Offer emailed (" + o.lines.length + " items)");
+        closeModal(); render(); toast("Opened Gmail with your offer.");
+        break;
+      }
+
+      case "print-offer": {
+        var pmo = a.closest(".modal");
+        var po = readOffer(pmo);
+        var ps = Store.settings();
+        var plt = offerLinesText(po);
+        var sym = Prices.currencySymbol();
+        var rowsHtml = po.lines.map(function (l) {
+          return "<tr><td>" + l.name + "</td><td style='text-align:right'>" + l.qty + " MT</td><td style='text-align:right'>" +
+            sym + Prices.fmt(Prices.toDisplay(l.unit)) + "/MT</td><td style='text-align:right'>" + sym + Prices.fmt(Prices.toDisplay(l.total)) + "</td></tr>";
+        }).join("");
+        var grand = po.lines.reduce(function (x, l) { return x + l.total; }, 0);
+        var w = window.open("", "_blank");
+        if (!w) { toast("Allow pop-ups to print the offer."); break; }
+        w.document.write(
+          "<html><head><title>Offer — " + (company.name || "") + "</title><style>" +
+          "body{font-family:Arial,sans-serif;max-width:720px;margin:32px auto;color:#111}h1{font-size:20px}" +
+          "table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}" +
+          ".tot{font-weight:bold;font-size:16px}.muted{color:#666;font-size:13px}</style></head><body>" +
+          "<h1>" + esc(ps.companyName || "Offer") + "</h1>" +
+          "<div class='muted'>" + esc(ps.senderName || "") + (ps.phone ? " · " + esc(ps.phone) : "") + (ps.senderEmail ? " · " + esc(ps.senderEmail) : "") + "</div>" +
+          "<p><strong>Offer to:</strong> " + esc(company.name || "") + "<br><strong>Date:</strong> " + new Date().toLocaleDateString() + "</p>" +
+          "<table><thead><tr><th>Product</th><th style='text-align:right'>Qty</th><th style='text-align:right'>Unit</th><th style='text-align:right'>Total</th></tr></thead><tbody>" +
+          rowsHtml + "</tbody></table>" +
+          "<p class='tot'>Total: " + sym + Prices.fmt(Prices.toDisplay(grand)) + "</p>" +
+          "<p class='muted'>Terms: " + esc(po.inco) + " " + esc(po.port) + " · Validity: " + esc(po.validity) + " · Payment: " + esc(po.payment) +
+          (po.notes ? "<br>Notes: " + esc(po.notes) : "") +
+          "<br>Prices are formula-linked to the prevailing LME and confirmed at contract.</p>" +
+          "</body></html>");
+        w.document.close(); w.focus(); setTimeout(function () { w.print(); }, 250);
+        Store.logActivity(id, "offer", "Offer printed (" + po.lines.length + " items)");
+        break;
+      }
+
+      case "toggle-currency": {        var cur = Store.settings().displayCurrency || "USD";
+        var next = cur === "USD" ? "EUR" : "USD";
+        Store.updateSettings({ displayCurrency: next });
+        renderPriceBar();
+        if (next === "EUR" && !Store.prices().fx) {
+          toast("Fetching EUR rate…");
+          Prices.fetchLive(true).then(function (d) { if (d) { Store.applyPriceFeed(d); renderPriceBar(); } }).catch(function () {});
+        }
+        break;
+      }
+
       case "refresh-prices":
         toast("Scanning live prices…");
         Prices.fetchLive(true).then(function (d) {
@@ -876,8 +1159,39 @@ window.App = window.App || {};
         var patch = {};
         sc.querySelectorAll("[data-set]").forEach(function (el) { patch[el.getAttribute("data-set")] = el.value.trim(); });
         sc.querySelectorAll("[data-set-bool]").forEach(function (el) { patch[el.getAttribute("data-set-bool")] = el.checked; });
+        var margins = Object.assign({}, Store.settings().margins);
+        sc.querySelectorAll("[data-margin]").forEach(function (el) {
+          var v = el.value.trim();
+          if (v === "") delete margins[el.getAttribute("data-margin")];
+          else margins[el.getAttribute("data-margin")] = Number(v);
+        });
+        patch.margins = margins;
         Store.updateSettings(patch); toast("Settings saved.");
         if (App.startLiveTicker) App.startLiveTicker();
+        break;
+      }
+
+      case "add-template": templateForm(); break;
+      case "edit-template": templateForm((Store.settings().templates || []).find(function (t) { return t.id === id; })); break;
+      case "del-template": {
+        var tpls = (Store.settings().templates || []).filter(function (t) { return t.id !== id; });
+        Store.updateSettings({ templates: tpls });
+        render(); toast("Template deleted.");
+        break;
+      }
+      case "save-template": {
+        var tm = a.closest(".modal");
+        var tdata = {
+          id: id || App.uid(),
+          name: (tm.querySelector("[data-tf=name]").value || "Untitled").trim(),
+          subject: tm.querySelector("[data-tf=subject]").value,
+          body: tm.querySelector("[data-tf=body]").value
+        };
+        var arr = (Store.settings().templates || []).slice();
+        var idx = arr.findIndex(function (t) { return t.id === tdata.id; });
+        if (idx >= 0) arr[idx] = tdata; else arr.push(tdata);
+        Store.updateSettings({ templates: arr });
+        closeModal(); render(); toast("Template saved.");
         break;
       }
 
@@ -1047,6 +1361,12 @@ window.App = window.App || {};
   App.onSheetEdit = function (id, field, value) {
     var patch = {}; patch[field] = value;
     App.Store.updateSheetRow(id, patch);
+  };
+
+  App.onFilter = function (kind, value) {
+    if (kind === "status") filterStatus = value; else if (kind === "metal") filterMetal = value;
+    var c = $("content");
+    if (route.view === "companies" || route.view === "country") c.innerHTML = viewCompanies(route.country);
   };
 
   App.onSearch = function (v) { query = v; var c = $("content");

@@ -30,6 +30,24 @@ window.App = window.App || {};
       var priceLines = buildPriceBlock(prices);
       var headline = products.length ? products[0] : "non-ferrous metals";
 
+      // If a default template is set, render it with placeholders.
+      var tplId = s.defaultTemplateId;
+      var tpl = tplId && (s.templates || []).filter(function (t) { return t.id === tplId; })[0];
+      if (tpl) {
+        var map = {
+          "{{contact}}": contactName ? firstName(contactName) : "Sir or Madam",
+          "{{company}}": company.name || "your company",
+          "{{products}}": products.length ? products.join(", ") : "non-ferrous metals",
+          "{{prices}}": priceLines.trim(),
+          "{{me}}": s.senderName || "",
+          "{{myCompany}}": s.companyName || ""
+        };
+        function sub(str) {
+          return String(str || "").replace(/\{\{contact\}\}|\{\{company\}\}|\{\{products\}\}|\{\{prices\}\}|\{\{me\}\}|\{\{myCompany\}\}/g, function (m) { return map[m]; });
+        }
+        return { subject: sub(tpl.subject) || (s.companyName + " — offer"), body: sub(tpl.body) };
+      }
+
       var subject = products.length
         ? (headline + (products.length > 1 ? " & more" : "") + " — direct from " + s.companyName)
         : ("Non-ferrous supply — " + s.companyName);

@@ -12,6 +12,24 @@ window.App = window.App || {};
       return Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
     },
 
+    // Convert a stored USD value to the chosen display currency.
+    toDisplay: function (usd) {
+      if (usd == null || isNaN(usd)) return null;
+      var s = App.Store.settings();
+      var fx = App.Store.prices().fx;
+      if (s.displayCurrency === "EUR" && fx) return Number(usd) / Number(fx);
+      return Number(usd);
+    },
+    currencySymbol: function () {
+      return App.Store.settings().displayCurrency === "EUR" ? "€" : "$";
+    },
+    // Formatted money in the display currency, e.g. "€8,540".
+    money: function (usd) {
+      var v = this.toDisplay(usd);
+      if (v == null) return "—";
+      return this.currencySymbol() + this.fmt(v);
+    },
+
     // The all-in aluminium price your buyers actually pay in the EU = LME + premium.
     aluminiumAllIn: function (prices) {
       var row = prices.rows.aluminium || {};
@@ -112,7 +130,8 @@ window.App = window.App || {};
       var defs = [
         { k: "gold", sym: "GC=F", mult: 1 },         // USD / troy oz
         { k: "copper", sym: "HG=F", mult: 2204.62 }, // COMEX USD/lb -> USD/MT
-        { k: "aluminium", sym: "ALI=F", mult: 1 }    // USD / MT
+        { k: "aluminium", sym: "ALI=F", mult: 1 },   // USD / MT
+        { k: "fx", sym: "EURUSD=X", mult: 1, fx: true } // USD per 1 EUR
       ];
       function getJson(url) {
         var i = 0;
@@ -130,8 +149,10 @@ window.App = window.App || {};
         return getJson(url).then(function (j) {
           var res = j && j.chart && j.chart.result && j.chart.result[0];
           var meta = res && res.meta;
-          if (meta && meta.regularMarketPrice != null) out[d.k] = Math.round(meta.regularMarketPrice * d.mult);
-          var pc = meta && (meta.chartPreviousClose != null ? meta.chartPreviousClose : meta.previousClose);
+          if (!meta || meta.regularMarketPrice == null) return;
+          if (d.fx) { out.fx = Number(meta.regularMarketPrice); return; }
+          out[d.k] = Math.round(meta.regularMarketPrice * d.mult);
+          var pc = meta.chartPreviousClose != null ? meta.chartPreviousClose : meta.previousClose;
           if (pc != null) out.prevs[d.k] = Math.round(pc * d.mult);
           var q = res && res.indicators && res.indicators.quote && res.indicators.quote[0];
           if (q && Array.isArray(q.close)) {

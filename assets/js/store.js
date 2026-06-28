@@ -29,7 +29,13 @@ window.App = window.App || {};
     priceLiveSeconds: 60,       // auto-refresh interval for the live ticker (0 = off)
     teamSync: false,            // share data with teammates via the proxy /api/data
     syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
-    syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
+    syncToken: "",              // optional shared secret (matches proxy DATA_AUTH_TOKEN)
+    displayCurrency: "USD",     // USD | EUR (ticker display toggle; prices stored in USD)
+    margins: {},                // productId -> margin % applied over the metal price for offers
+    templates: [],              // [{ id, name, subject, body }] email templates
+    defaultTemplateId: "",      // template used by default when composing
+    followUpDays: 4,            // a buyer stuck on 'awaiting reply' longer than this needs follow-up
+    alertPct: 2                 // flag a metal on the dashboard when it moves more than this %
   };
 
   // LME prices are entered manually (or via the optional live adapter).
@@ -41,6 +47,7 @@ window.App = window.App || {};
     source: "Manual entry",
     delayed: false,
     premiums: {},
+    fx: null,                   // EUR/USD rate (USD per 1 EUR) for the currency toggle
     rows: {
       copper:    { value: null, prev: null, premium: null },
       aluminium: { value: null, prev: null, premium: null },
@@ -110,7 +117,10 @@ window.App = window.App || {};
     s.companies.forEach(function (c) {
       if (!Array.isArray(c.people)) c.people = [];
       c.people.forEach(function (p) { if (!p.status) p.status = "red"; });
+      if (!Array.isArray(c.activity)) c.activity = [];
     });
+    if (!Array.isArray(s.settings.templates)) s.settings.templates = [];
+    if (!s.settings.margins || typeof s.settings.margins !== "object") s.settings.margins = {};
     if (!Array.isArray(s.customCountries)) s.customCountries = [];
     if (!Array.isArray(s.sheet)) s.sheet = [];
     if (typeof s.rev !== "number") s.rev = 0;
@@ -161,7 +171,7 @@ window.App = window.App || {};
       var c = Object.assign({
         id: uid(), name: "", country: "DE", city: "", website: "",
         contactName: "", email: "", phone: "", materials: [], people: [],
-        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null, notes: ""
+        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null, notes: "", activity: []
       }, data || {});
       load().companies.push(c);
       save();
@@ -179,6 +189,16 @@ window.App = window.App || {};
     },
     setStatus: function (id, status, extra) {
       this.updateCompany(id, Object.assign({ status: status }, extra || {}));
+    },
+
+    // Append a dated entry to a buyer's activity timeline.
+    logActivity: function (id, type, text) {
+      var c = this.companyById(id);
+      if (!c) return;
+      if (!Array.isArray(c.activity)) c.activity = [];
+      c.activity.unshift({ ts: Date.now(), type: type, text: text });
+      c.activity = c.activity.slice(0, 50);
+      save();
     },
 
     // Merge Apollo-discovered people into a company (dedupe by name/email).
@@ -294,6 +314,7 @@ window.App = window.App || {};
       if (prem.aluminium != null) p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(prem.aluminium) });
       if (prem.copper != null) p.rows.copper = Object.assign({}, p.rows.copper, { premium: Number(prem.copper) });
       p.premiums = prem;
+      if (d.fx != null && !isNaN(d.fx)) p.fx = Number(d.fx);
       if (d.currency) p.currency = d.currency;
       p.delayed = !!d.delayed;
       p.source = d.source || "Live feed";
