@@ -1,0 +1,279 @@
+/* ============================================================
+   store.js  —  localStorage-backed state + import/export
+   ============================================================ */
+window.App = window.App || {};
+
+(function (App) {
+  "use strict";
+
+  var KEY = "metals-crm-state-v1";
+
+  var DEFAULT_SETTINGS = {
+    senderName: "Your Name",
+    senderTitle: "Sales / Trading",
+    companyName: "Your Company Ltd.",
+    senderEmail: "",            // your Gmail work address (used to build thread links)
+    phone: "",
+    website: "",
+    signature: "",              // optional extra signature lines
+    apolloProxyUrl: "http://localhost:8787",  // address of your local Apollo proxy
+    revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
+    revealPhone: false          // if true, also request phone numbers (async; needs public proxy)
+  };
+
+  // LME prices are entered manually (or via the optional live adapter).
+  // Values in USD per metric tonne. Aluminium premium in USD/MT (EU duty paid).
+  var DEFAULT_PRICES = {
+    currency: "USD",
+    unit: "per MT",
+    updatedAt: null,
+    source: "Manual entry",
+    rows: {
+      copper:    { value: null },
+      aluminium: { value: null, premium: null },
+      zinc:      { value: null },
+      lead:      { value: null },
+      nickel:    { value: null }
+    }
+  };
+
+  function uid() {
+    return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+  App.uid = uid;
+
+  /* ---- Clearly-labelled SAMPLE rows. Replace with real Apollo/CSV data. ---- */
+  function sampleCompanies() {
+    return [
+      {
+        id: uid(), name: "[SAMPLE] Rheinmetall Recycling GmbH", country: "DE",
+        city: "Düsseldorf", website: "example.com",
+        contactName: "Procurement Desk", email: "buyer@example.com", phone: "+49 000 000",
+        materials: ["copper-cathode", "cu-scrap-millberry", "aluminium-ingots"],
+        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null,
+        notes: "Sample row — replace with real verified contact."
+      },
+      {
+        id: uid(), name: "[SAMPLE] Lombardia Metalli S.p.A.", country: "IT",
+        city: "Milan", website: "example.com",
+        contactName: "Purchasing", email: "acquisti@example.com", phone: "+39 000 000",
+        materials: ["brass-scrap-honey", "zinc-ingot-hg", "lead-refined"],
+        status: "yellow", lastEmailSubject: "Q3 supply — copper & brass", lastEmailAt: Date.now() - 86400000, lastReplyAt: null,
+        notes: "Sample row — replace with real verified contact."
+      },
+      {
+        id: uid(), name: "[SAMPLE] Iberia Nonferrous SL", country: "ES",
+        city: "Bilbao", website: "example.com",
+        contactName: "Trading", email: "trading@example.com", phone: "+34 000 000",
+        materials: ["al-scrap-ubc", "al-sows", "ss-304"],
+        status: "green", lastEmailSubject: "Aluminium sows availability", lastEmailAt: Date.now() - 172800000, lastReplyAt: Date.now() - 3600000,
+        notes: "Sample row — replied, follow up."
+      }
+    ];
+  }
+
+  function freshState() {
+    var companies = sampleCompanies();
+    companies.forEach(function (c) { if (!Array.isArray(c.people)) c.people = []; });
+    return {
+      version: 1,
+      settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
+      prices: JSON.parse(JSON.stringify(DEFAULT_PRICES)),
+      companies: companies
+    };
+  }
+
+  var state = null;
+
+  function load() {
+    if (state) return state;
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) {
+        state = JSON.parse(raw);
+        // backfill any missing keys after upgrades
+        state.settings = Object.assign({}, DEFAULT_SETTINGS, state.settings || {});
+        state.prices = Object.assign({}, DEFAULT_PRICES, state.prices || {});
+        state.prices.rows = Object.assign({}, DEFAULT_PRICES.rows, state.prices.rows || {});
+        if (!Array.isArray(state.companies)) state.companies = [];
+        state.companies.forEach(function (c) { if (!Array.isArray(c.people)) c.people = []; });
+        return state;
+      }
+    } catch (e) {
+      console.warn("Could not read saved state, starting fresh.", e);
+    }
+    state = freshState();
+    save();
+    return state;
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error("Save failed (storage full or blocked).", e);
+    }
+  }
+
+  var Store = {
+    get: function () { return load(); },
+    save: save,
+
+    /* ---------- Companies ---------- */
+    companies: function () { return load().companies; },
+    companiesByCountry: function (code) {
+      return load().companies.filter(function (c) { return c.country === code; });
+    },
+    companyById: function (id) {
+      return load().companies.find(function (c) { return c.id === id; });
+    },
+    addCompany: function (data) {
+      var c = Object.assign({
+        id: uid(), name: "", country: "DE", city: "", website: "",
+        contactName: "", email: "", phone: "", materials: [], people: [],
+        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null, notes: ""
+      }, data || {});
+      load().companies.push(c);
+      save();
+      return c;
+    },
+    updateCompany: function (id, patch) {
+      var c = this.companyById(id);
+      if (c) { Object.assign(c, patch); save(); }
+      return c;
+    },
+    deleteCompany: function (id) {
+      var s = load();
+      s.companies = s.companies.filter(function (c) { return c.id !== id; });
+      save();
+    },
+    setStatus: function (id, status, extra) {
+      this.updateCompany(id, Object.assign({ status: status }, extra || {}));
+    },
+
+    // Merge Apollo-discovered people into a company (dedupe by name/email).
+    // If the company has no primary email yet, promote the first emailed person.
+    addPeople: function (id, people) {
+      var c = this.companyById(id);
+      if (!c) return 0;
+      if (!Array.isArray(c.people)) c.people = [];
+      var added = 0;
+      (people || []).forEach(function (p) {
+        if (!p || (!p.name && !p.email)) return;
+        var dup = c.people.some(function (x) {
+          return (p.email && x.email && x.email.toLowerCase() === p.email.toLowerCase()) ||
+                 (!p.email && x.name && p.name && x.name.toLowerCase() === p.name.toLowerCase());
+        });
+        if (dup) return;
+        c.people.push({
+          name: p.name || "", title: p.title || "", seniority: p.seniority || "",
+          email: p.email || "", phone: p.phone || "", linkedin: p.linkedin || "",
+          locked: !!p.locked
+        });
+        added++;
+      });
+      if (!c.contactName && c.people.length) {
+        var primary = c.people.find(function (x) { return x.email; }) || c.people[0];
+        c.contactName = primary.name;
+        if (!c.email && primary.email) c.email = primary.email;
+        if (!c.phone && primary.phone) c.phone = primary.phone;
+      }
+      save();
+      return added;
+    },
+    removePerson: function (id, index) {
+      var c = this.companyById(id);
+      if (c && c.people) { c.people.splice(index, 1); save(); }
+    },
+
+    // Merge a {nameLower: phone} map (from the async webhook) into a company's people.
+    mergePhones: function (id, phoneMap) {
+      var c = this.companyById(id);
+      if (!c || !c.people || !phoneMap) return 0;
+      var n = 0;
+      c.people.forEach(function (p) {
+        var key = (p.name || "").toLowerCase();
+        if (!p.phone && phoneMap[key]) { p.phone = phoneMap[key]; n++; }
+      });
+      if (n) {
+        if (!c.phone && c.people[0] && c.people[0].phone) c.phone = c.people[0].phone;
+        save();
+      }
+      return n;
+    },
+
+    /* ---------- Settings ---------- */
+    settings: function () { return load().settings; },
+    updateSettings: function (patch) {
+      Object.assign(load().settings, patch); save();
+    },
+
+    /* ---------- Prices ---------- */
+    prices: function () { return load().prices; },
+    updatePrices: function (patch) {
+      Object.assign(load().prices, patch);
+      load().prices.updatedAt = Date.now();
+      save();
+    },
+    setPriceRow: function (key, partial) {
+      var p = load().prices;
+      p.rows[key] = Object.assign({}, p.rows[key], partial);
+      p.updatedAt = Date.now();
+      save();
+    },
+
+    /* ---------- Import / Export ---------- */
+    exportJSON: function () {
+      return JSON.stringify(load(), null, 2);
+    },
+    importJSON: function (text) {
+      var obj = JSON.parse(text);
+      if (!obj || !Array.isArray(obj.companies)) throw new Error("Invalid backup file.");
+      state = Object.assign(freshState(), obj);
+      save();
+    },
+    // Bulk add companies from parsed CSV rows (objects keyed by header).
+    importCompanyRows: function (rows) {
+      var added = 0;
+      rows.forEach(function (r) {
+        if (!r.name && !r.email) return;
+        Store.addCompany({
+          name: r.name || "",
+          country: (r.country || "").toUpperCase().slice(0, 2) || "DE",
+          city: r.city || "",
+          website: r.website || "",
+          contactName: r.contact || r.contactname || r.contact_name || "",
+          email: r.email || "",
+          phone: r.phone || "",
+          materials: parseMaterials(r.materials),
+          notes: r.notes || ""
+        });
+        added++;
+      });
+      return added;
+    },
+    resetAll: function () {
+      state = freshState();
+      save();
+    }
+  };
+
+  // materials column can be "copper-cathode;al-sows" or "Copper cathode, Aluminium sows"
+  function parseMaterials(val) {
+    if (!val) return [];
+    return String(val).split(/[;,|]/).map(function (token) {
+      token = token.trim();
+      if (!token) return null;
+      var byId = App.productById(token);
+      if (byId) return byId.id;
+      var lower = token.toLowerCase();
+      var match = App.PRODUCTS.find(function (p) {
+        return p.name.toLowerCase().indexOf(lower) !== -1 || lower.indexOf(p.name.toLowerCase()) !== -1;
+      });
+      return match ? match.id : null;
+    }).filter(Boolean);
+  }
+
+  App.Store = Store;
+
+})(window.App);

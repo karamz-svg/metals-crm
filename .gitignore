@@ -1,0 +1,12 @@
+# Secrets — NEVER commit your Apollo key
+.env
+.env.local
+*.key
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
