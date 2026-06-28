@@ -20,6 +20,9 @@ window.App = window.App || {};
   }
   function $(id) { return document.getElementById(id); }
   function metal(id) { return App.METALS[id] || { label: id, color: "#888" }; }
+  function opt(value, label, current) {
+    return '<option value="' + esc(value) + '"' + (current === value ? " selected" : "") + ">" + esc(label) + "</option>";
+  }
 
   function toast(msg) {
     var root = $("toast-root");
@@ -67,12 +70,15 @@ window.App = window.App || {};
 
     var liveLabel = (Store.settings().autoScanPrices !== false) ? " · auto-scan daily" : "";
     var delayed = p.delayed ? " · delayed/indicative" : "";
+    var warn = App.priceMsg
+      ? ' <span class="price-warn" data-nav="settings" title="Open price settings">⚠️ ' + esc(App.priceMsg) + " — Set up</span>"
+      : (!p.updatedAt ? ' <span class="price-warn" data-nav="settings">⚠️ Live prices not set up — Set up</span>' : "");
 
     $("pricebar").innerHTML =
       '<span class="pb-title">LME&nbsp;Board</span>' +
       '<div class="ticker">' + chips + "</div>" +
       '<div class="pb-meta">' +
-        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" +
+        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" + warn +
         '<button class="btn sm" data-action="refresh-prices">↻ Live now</button>' +
         '<button class="btn sm primary" data-action="edit-prices">Update prices</button>' +
       "</div>";
@@ -358,10 +364,25 @@ window.App = window.App || {};
         "</div></div>" +
       '<div class="card" style="max-width:640px;margin-top:16px;"><h3>💱 Live prices</h3>' +
         '<div class="meta">Prices show on the bar at the top of every page and feed into each email. ' +
-        'Choose a provider in the proxy\'s <span class="kbd">.env</span> (<span class="kbd">PRICE_PROVIDER</span>, e.g. metals-api + key) — see README. ' +
-        'You can always enter prices manually via <strong>Update prices</strong> on the bar.</div>' +
-        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + "</div>" +
-        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
+        'Pick where they come from — for the hosted site use <strong>Metals-API (direct)</strong> with a free key, ' +
+        'since the local proxy isn\'t reachable from https.</div>' +
+        '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + (App.priceMsg ? ' · <span style="color:var(--yellow)">' + esc(App.priceMsg) + "</span>" : "") + "</div>" +
+        '<div class="field" style="margin-top:10px;"><label>Price source</label><select data-set="priceSource">' +
+          opt("metalsapi", "Metals-API (direct, needs key) — works on hosted site", s.priceSource) +
+          opt("custom", "Custom URL (any CORS JSON feed)", s.priceSource) +
+          opt("proxy", "Local proxy /api/prices (needs the Node proxy running)", s.priceSource) +
+          opt("manual", "Manual only (no auto-fetch)", s.priceSource) +
+        "</select></div>" +
+        '<div class="field"><label>Metals-API key (for the direct source — free at metals-api.com)</label><input data-set="priceApiKey" value="' + esc(s.priceApiKey || "") + '" placeholder="your access_key"/></div>' +
+        '<div class="field"><label>Custom price URL (for the Custom source)</label><input data-set="priceCustomUrl" value="' + esc(s.priceCustomUrl || "") + '" placeholder="https://…/prices (returns normalized JSON)"/></div>' +
+        '<div class="field-2">' +
+          '<div class="field"><label>Calibrate: unit</label><select data-set="priceUnit">' +
+            opt("tonne", "per tonne", s.priceUnit) + opt("lb", "per lb (×2204.62)", s.priceUnit) + opt("oz", "per oz", s.priceUnit) +
+          "</select></div>" +
+          '<div class="field"><label>Calibrate: multiplier (if numbers look off)</label><input data-set="priceMult" value="' + esc(s.priceMult != null ? s.priceMult : 1) + '" placeholder="1"/></div>' +
+        "</div>" +
+        '<label class="check" style="margin:4px 0 12px;"><input type="checkbox" data-set-bool="priceInvert"' + (s.priceInvert !== false ? " checked" : "") + '> Invert rate (1/rate) — keep on for Metals-API</label>' +
+        '<label class="check" style="margin:0 0 12px;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
           '<button class="btn" data-action="refresh-prices">↻ Fetch prices now</button></div>' +
       "</div>" +
@@ -731,10 +752,12 @@ window.App = window.App || {};
       case "refresh-prices":
         toast("Scanning live prices…");
         Prices.fetchLive(true).then(function (d) {
+          App.priceMsg = "";
           Store.applyPriceFeed(d);
           render();
           toast("Live prices loaded (" + (d.source || "feed") + ").");
         }).catch(function (err) {
+          App.priceMsg = err.message; renderPriceBar();
           toast(err.message);
         });
         break;
@@ -893,19 +916,24 @@ window.App = window.App || {};
     }
   };
 
-  /* Auto-scan live prices ~once/day on load (if a provider is configured).
-     Silent: no error toast when there's no feed/proxy. */
+  /* Auto-scan live prices ~once/day on load (if a source is configured).
+     Surfaces the reason in the price bar if it can't (instead of silent). */
   function autoScanPrices() {
     if (Store.settings().autoScanPrices === false) return;
+    if (Store.settings().priceSource === "manual") return;
     var p = Store.prices();
     var age = Date.now() - (p.updatedAt || 0);
     if (p.updatedAt && age < 12 * 3600 * 1000) return; // already fresh today
+    App.priceMsg = "scanning…"; renderPriceBar();
     Prices.fetchLive().then(function (d) {
       if (d && (d.copper != null || d.aluminium != null || d.zinc != null)) {
-        Store.applyPriceFeed(d);
-        renderPriceBar();
+        App.priceMsg = ""; Store.applyPriceFeed(d); renderPriceBar();
+      } else {
+        App.priceMsg = "Live feed returned no prices."; renderPriceBar();
       }
-    }).catch(function () { /* silent — no provider/proxy configured yet */ });
+    }).catch(function (err) {
+      App.priceMsg = err.message; renderPriceBar();
+    });
   }
 
   /* boot */

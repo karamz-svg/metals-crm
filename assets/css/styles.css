@@ -85,6 +85,8 @@ a:hover { text-decoration: underline; }
 .chip.premium { border-color: #4a6; }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .pb-meta { color: var(--muted); font-size: 11.5px; display: flex; align-items: center; gap: 10px; }
+.price-warn { color: var(--yellow); cursor: pointer; text-decoration: underline dotted; }
+.price-warn:hover { color: #ffd35c; }
 
 /* ---------- Buttons ---------- */
 .btn {

@@ -20,6 +20,12 @@ window.App = window.App || {};
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
     revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
     autoScanPrices: true,       // auto-fetch live prices daily on app load (needs a price provider)
+    priceSource: "metalsapi",   // metalsapi | custom | proxy | manual
+    priceApiKey: "",            // Metals-API key (price-only; for direct browser fetch)
+    priceCustomUrl: "",         // any CORS JSON endpoint returning normalized prices
+    priceInvert: true,          // Metals-API returns base/symbol -> use 1/rate
+    priceUnit: "tonne",         // tonne | lb | oz (converted to per-tonne)
+    priceMult: 1,               // final calibration multiplier
     teamSync: false,            // share data with teammates via the proxy /api/data
     syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
     syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
