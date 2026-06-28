@@ -49,7 +49,7 @@ window.App = window.App || {};
 
     var cards = App.TICKER.map(function (t) {
       var row = p.rows[t.key] || {};
-      var val, sub, chg = "";
+      var val, sub, chg = "", spark = "";
       if (t.kind === "premium") {
         val = row.premium;
         sub = esc(t.unit);
@@ -57,14 +57,14 @@ window.App = window.App || {};
         val = row.value;
         chg = changeHtml(row);
         sub = esc(p.currency) + " " + esc(t.unit) + " · " + esc(dateStr);
+        var pct = Prices.changePct(row);
+        spark = Prices.sparkline(row.series, pct == null ? null : (pct >= 0 ? "#46d07f" : "#ef5a5a"));
       }
-      var priceTxt = (val == null) ? "—" : (t.kind === "premium" && t.key === "copper")
-        ? "$" + Prices.fmt(val)               // copper premium often a range; plain
-        : "$" + Prices.fmt(val);
+      var priceTxt = (val == null) ? "—" : "$" + Prices.fmt(val);
       return '<div class="tk">' +
         '<div class="tk-label">' + esc(t.label) + "</div>" +
         '<div class="tk-price">' + priceTxt + chg + "</div>" +
-        '<div class="tk-sub">' + sub + "</div>" +
+        '<div class="tk-foot">' + (spark || '<span class="tk-spark-empty"></span>') + '<span class="tk-sub">' + sub + "</span></div>" +
       "</div>";
     }).join("");
 
@@ -415,11 +415,13 @@ window.App = window.App || {};
         'since the local proxy isn\'t reachable from https.</div>' +
         '<div class="meta" style="margin-top:8px;">Current: <strong>' + esc(Store.prices().source) + "</strong> · " + esc(Prices.ageText(Store.prices().updatedAt)) + (App.priceMsg ? ' · <span style="color:var(--yellow)">' + esc(App.priceMsg) + "</span>" : "") + "</div>" +
         '<div class="field" style="margin-top:10px;"><label>Price source</label><select data-set="priceSource">' +
-          opt("metalsapi", "Metals-API (direct, needs key) — works on hosted site", s.priceSource) +
+          opt("free", "Free web feed — no key, no setup (Gold/Copper/Aluminium)", s.priceSource) +
+          opt("metalsapi", "Metals-API (direct, needs key) — adds Zinc/Lead/Nickel", s.priceSource) +
           opt("custom", "Custom URL (any CORS JSON feed)", s.priceSource) +
           opt("proxy", "Local proxy /api/prices (needs the Node proxy running)", s.priceSource) +
           opt("manual", "Manual only (no auto-fetch)", s.priceSource) +
         "</select></div>" +
+        '<div class="meta" style="margin:-2px 0 8px;">Free feed pulls Gold, Copper &amp; Aluminium from public web data (no key). LME Zinc/Lead/Nickel &amp; premiums aren\'t free anywhere reliable — enter those via <strong>Edit</strong>.</div>' +
         '<div class="field"><label>Metals-API key (for the direct source — free at metals-api.com)</label><input data-set="priceApiKey" value="' + esc(s.priceApiKey || "") + '" placeholder="your access_key"/></div>' +
         '<div class="field"><label>Custom price URL (for the Custom source)</label><input data-set="priceCustomUrl" value="' + esc(s.priceCustomUrl || "") + '" placeholder="https://…/prices (returns normalized JSON)"/></div>' +
         '<div class="field-2">' +

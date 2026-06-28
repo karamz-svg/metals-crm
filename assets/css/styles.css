@@ -92,6 +92,9 @@ a:hover { text-decoration: underline; }
 .tk-chg.down { color: #ef5a5a; }
 .tk-chg.flat { color: #8b97a6; }
 .tk-sub { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #6f7c8b; white-space: nowrap; }
+.tk-foot { display: flex; align-items: center; gap: 8px; }
+.tk-spark { display: block; opacity: .9; }
+.tk-spark-empty { width: 74px; height: 22px; display: inline-block; }
 .pb-meta { display: flex; align-items: center; gap: 10px; padding: 0 16px; border-left: 1px solid var(--line); }
 .tk-live { color: #46d07f; font-size: 11px; font-weight: 700; letter-spacing: .05em; animation: pulse 1.6s infinite; }
 .chip {

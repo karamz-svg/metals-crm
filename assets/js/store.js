@@ -20,8 +20,8 @@ window.App = window.App || {};
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
     revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
     autoScanPrices: true,       // auto-fetch live prices daily on app load (needs a price provider)
-    priceSource: "metalsapi",   // metalsapi | custom | proxy | manual
-    priceApiKey: "",            // Metals-API key (price-only; for direct browser fetch)
+    priceSource: "free",        // free | metalsapi | custom | proxy | manual
+    priceApiKey: "",            // Metals-API key (only if you choose the metalsapi source)
     priceCustomUrl: "",         // any CORS JSON endpoint returning normalized prices
     priceInvert: true,          // Metals-API returns base/symbol -> use 1/rate
     priceUnit: "tonne",         // tonne | lb | oz (converted to per-tonne)
@@ -273,10 +273,19 @@ window.App = window.App || {};
       ["copper", "aluminium", "zinc", "lead", "nickel", "gold"].forEach(function (k) {
         if (d[k] != null && !isNaN(d[k])) {
           var old = p.rows[k] && p.rows[k].value;
-          p.rows[k] = Object.assign({}, p.rows[k], {
-            prev: (old != null ? old : (p.rows[k] && p.rows[k].prev)) ,
-            value: Number(d[k])
-          });
+          var prev = (d.prevs && d.prevs[k] != null && !isNaN(d.prevs[k]))
+            ? Number(d.prevs[k])                                   // daily close from the feed
+            : (old != null ? old : (p.rows[k] && p.rows[k].prev)); // else roll the last value
+          // sparkline series: prefer the feed's history, else append to a rolling buffer
+          var series;
+          if (d.series && Array.isArray(d.series[k]) && d.series[k].length) {
+            series = d.series[k].slice(-40);
+          } else {
+            series = ((p.rows[k] && p.rows[k].series) || []).slice();
+            series.push(Number(d[k]));
+            series = series.slice(-40);
+          }
+          p.rows[k] = Object.assign({}, p.rows[k], { prev: prev, value: Number(d[k]), series: series });
         }
       });
       // premiums: aluminium (duty-paid EU) and copper (CIF-EU equivalent)
