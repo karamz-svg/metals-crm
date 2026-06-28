@@ -369,7 +369,6 @@ const PRICE_UNIT = (process.env.PRICE_UNIT || "tonne").toLowerCase();
 const UNIT_MULT = PRICE_UNIT === "lb" ? 2204.62 : (PRICE_UNIT === "oz" ? 32150.7 : 1);
 const PRICE_MULT = Number(process.env.PRICE_MULT || 1);
 const METALS_API_SYM = { copper: "LME-XCU", aluminium: "LME-ALU", zinc: "LME-ZNC", lead: "LME-LEAD", nickel: "LME-NI" };
-
 let priceCache = { data: null, ts: 0 };
 
 function calibrate(raw) {
@@ -382,7 +381,7 @@ function calibrate(raw) {
 
 async function fetchMetalsApi() {
   if (!PRICE_API_KEY) throw new Error("PRICE_API_KEY not set for metals-api.");
-  const syms = Object.values(METALS_API_SYM).join(",");
+  const syms = Object.values(METALS_API_SYM).join(",") + ",XAU";
   const url = "https://metals-api.com/api/latest?access_key=" + encodeURIComponent(PRICE_API_KEY) +
               "&base=" + encodeURIComponent(PRICE_BASE) + "&symbols=" + encodeURIComponent(syms);
   const r = await fetch(url);
@@ -396,6 +395,8 @@ async function fetchMetalsApi() {
     if (raw == null) raw = rates[PRICE_BASE + sym]; // some plans key as "USDLME-XCU"
     out[metal] = calibrate(raw);
   }
+  let graw = rates["XAU"]; if (graw == null) graw = rates[PRICE_BASE + "XAU"];
+  if (graw != null && !isNaN(graw)) out.gold = Math.round(Number(graw) < 1 ? 1 / graw : Number(graw)); // per troy oz
   return out;
 }
 
@@ -418,9 +419,12 @@ async function fetchPremiums() {
 }
 
 function mockPrices() {
+  // small random drift each call so the live ticker visibly updates
+  const j = (n, p) => Math.round(n * (1 + (Math.random() - 0.5) * p));
   return {
-    copper: 9250, aluminium: 2350, zinc: 2700, lead: 2050, nickel: 16500,
-    premium: 290, premiums: { aluminium: 290 },
+    copper: j(13270, 0.01), aluminium: j(3164, 0.01), zinc: j(3434, 0.01),
+    lead: j(1913, 0.01), nickel: j(16500, 0.01), gold: j(4085, 0.01),
+    premium: 585, premiums: { aluminium: 585, copper: 135 },
     currency: "USD", source: "MOCK (sample prices)", asOf: Date.now(), delayed: true
   };
 }

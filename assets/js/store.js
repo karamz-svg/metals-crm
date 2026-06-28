@@ -20,15 +20,22 @@ window.App = window.App || {};
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
     revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
     autoScanPrices: true,       // auto-fetch live prices daily on app load (needs a price provider)
-    priceSource: "metalsapi",   // metalsapi | custom | proxy | manual
-    priceApiKey: "",            // Metals-API key (price-only; for direct browser fetch)
+    priceSource: "free",        // free | metalsapi | custom | proxy | manual
+    priceApiKey: "",            // Metals-API key (only if you choose the metalsapi source)
     priceCustomUrl: "",         // any CORS JSON endpoint returning normalized prices
     priceInvert: true,          // Metals-API returns base/symbol -> use 1/rate
     priceUnit: "tonne",         // tonne | lb | oz (converted to per-tonne)
     priceMult: 1,               // final calibration multiplier
+    priceLiveSeconds: 60,       // auto-refresh interval for the live ticker (0 = off)
     teamSync: false,            // share data with teammates via the proxy /api/data
     syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
-    syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
+    syncToken: "",              // optional shared secret (matches proxy DATA_AUTH_TOKEN)
+    displayCurrency: "USD",     // USD | EUR (ticker display toggle; prices stored in USD)
+    margins: {},                // productId -> margin % applied over the metal price for offers
+    templates: [],              // [{ id, name, subject, body }] email templates
+    defaultTemplateId: "",      // template used by default when composing
+    followUpDays: 4,            // a buyer stuck on 'awaiting reply' longer than this needs follow-up
+    alertPct: 2                 // flag a metal on the dashboard when it moves more than this %
   };
 
   // LME prices are entered manually (or via the optional live adapter).
@@ -40,12 +47,14 @@ window.App = window.App || {};
     source: "Manual entry",
     delayed: false,
     premiums: {},
+    fx: null,                   // EUR/USD rate (USD per 1 EUR) for the currency toggle
     rows: {
-      copper:    { value: null },
-      aluminium: { value: null, premium: null },
-      zinc:      { value: null },
-      lead:      { value: null },
-      nickel:    { value: null }
+      copper:    { value: null, prev: null, premium: null },
+      aluminium: { value: null, prev: null, premium: null },
+      zinc:      { value: null, prev: null },
+      lead:      { value: null, prev: null },
+      nickel:    { value: null, prev: null },
+      gold:      { value: null, prev: null }
     }
   };
 
@@ -108,7 +117,10 @@ window.App = window.App || {};
     s.companies.forEach(function (c) {
       if (!Array.isArray(c.people)) c.people = [];
       c.people.forEach(function (p) { if (!p.status) p.status = "red"; });
+      if (!Array.isArray(c.activity)) c.activity = [];
     });
+    if (!Array.isArray(s.settings.templates)) s.settings.templates = [];
+    if (!s.settings.margins || typeof s.settings.margins !== "object") s.settings.margins = {};
     if (!Array.isArray(s.customCountries)) s.customCountries = [];
     if (!Array.isArray(s.sheet)) s.sheet = [];
     if (typeof s.rev !== "number") s.rev = 0;
@@ -159,7 +171,7 @@ window.App = window.App || {};
       var c = Object.assign({
         id: uid(), name: "", country: "DE", city: "", website: "",
         contactName: "", email: "", phone: "", materials: [], people: [],
-        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null, notes: ""
+        status: "red", lastEmailSubject: "", lastEmailAt: null, lastReplyAt: null, notes: "", activity: []
       }, data || {});
       load().companies.push(c);
       save();
@@ -177,6 +189,16 @@ window.App = window.App || {};
     },
     setStatus: function (id, status, extra) {
       this.updateCompany(id, Object.assign({ status: status }, extra || {}));
+    },
+
+    // Append a dated entry to a buyer's activity timeline.
+    logActivity: function (id, type, text) {
+      var c = this.companyById(id);
+      if (!c) return;
+      if (!Array.isArray(c.activity)) c.activity = [];
+      c.activity.unshift({ ts: Date.now(), type: type, text: text });
+      c.activity = c.activity.slice(0, 50);
+      save();
     },
 
     // Merge Apollo-discovered people into a company (dedupe by name/email).
@@ -255,7 +277,11 @@ window.App = window.App || {};
     },
     setPriceRow: function (key, partial) {
       var p = load().prices;
-      p.rows[key] = Object.assign({}, p.rows[key], partial);
+      var cur = p.rows[key] || {};
+      if (partial && partial.value != null && cur.value != null && Number(partial.value) !== Number(cur.value)) {
+        partial = Object.assign({ prev: cur.value }, partial);
+      }
+      p.rows[key] = Object.assign({}, cur, partial);
       p.updatedAt = Date.now();
       save();
     },
@@ -264,13 +290,31 @@ window.App = window.App || {};
     applyPriceFeed: function (d) {
       if (!d) return;
       var p = load().prices;
-      ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (k) {
-        if (d[k] != null && !isNaN(d[k])) p.rows[k] = Object.assign({}, p.rows[k], { value: Number(d[k]) });
+      ["copper", "aluminium", "zinc", "lead", "nickel", "gold"].forEach(function (k) {
+        if (d[k] != null && !isNaN(d[k])) {
+          var old = p.rows[k] && p.rows[k].value;
+          var prev = (d.prevs && d.prevs[k] != null && !isNaN(d.prevs[k]))
+            ? Number(d.prevs[k])                                   // daily close from the feed
+            : (old != null ? old : (p.rows[k] && p.rows[k].prev)); // else roll the last value
+          // sparkline series: prefer the feed's history, else append to a rolling buffer
+          var series;
+          if (d.series && Array.isArray(d.series[k]) && d.series[k].length) {
+            series = d.series[k].slice(-40);
+          } else {
+            series = ((p.rows[k] && p.rows[k].series) || []).slice();
+            series.push(Number(d[k]));
+            series = series.slice(-40);
+          }
+          p.rows[k] = Object.assign({}, p.rows[k], { prev: prev, value: Number(d[k]), series: series });
+        }
       });
-      if (d.premium != null && !isNaN(d.premium)) {
-        p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(d.premium) });
-      }
-      if (d.premiums && typeof d.premiums === "object") p.premiums = d.premiums;
+      // premiums: aluminium (duty-paid EU) and copper (CIF-EU equivalent)
+      if (d.premium != null && !isNaN(d.premium)) p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(d.premium) });
+      var prem = d.premiums || {};
+      if (prem.aluminium != null) p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(prem.aluminium) });
+      if (prem.copper != null) p.rows.copper = Object.assign({}, p.rows.copper, { premium: Number(prem.copper) });
+      p.premiums = prem;
+      if (d.fx != null && !isNaN(d.fx)) p.fx = Number(d.fx);
       if (d.currency) p.currency = d.currency;
       p.delayed = !!d.delayed;
       p.source = d.source || "Live feed";
@@ -300,7 +344,7 @@ window.App = window.App || {};
         if (dup) return;
         Store.addCompany({
           name: s.name, country: s.country, city: s.city || "", website: s.website || "",
-          materials: (s.materials || []).slice(), notes: s.notes || ""
+          email: s.email || "", materials: (s.materials || []).slice(), notes: s.notes || ""
         });
         added++;
       });
