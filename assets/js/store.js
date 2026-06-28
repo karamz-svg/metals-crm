@@ -19,7 +19,10 @@ window.App = window.App || {};
     apolloProxyUrl: "http://localhost:8787",  // address of your local Apollo proxy
     revealContacts: false,      // if true, proxy spends Apollo credits to unlock emails
     revealPhone: false,         // if true, also request phone numbers (async; needs public proxy)
-    autoScanPrices: true        // auto-fetch live prices daily on app load (needs a price provider)
+    autoScanPrices: true,       // auto-fetch live prices daily on app load (needs a price provider)
+    teamSync: false,            // share data with teammates via the proxy /api/data
+    syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
+    syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
   };
 
   // LME prices are entered manually (or via the optional live adapter).
@@ -88,18 +91,29 @@ window.App = window.App || {};
 
   var state = null;
 
+  // Backfill/repair a state object (after upgrades or a remote pull).
+  function normalize(s) {
+    s.settings = Object.assign({}, DEFAULT_SETTINGS, s.settings || {});
+    s.prices = Object.assign({}, DEFAULT_PRICES, s.prices || {});
+    s.prices.rows = Object.assign({}, DEFAULT_PRICES.rows, s.prices.rows || {});
+    if (!Array.isArray(s.companies)) s.companies = [];
+    s.companies.forEach(function (c) {
+      if (!Array.isArray(c.people)) c.people = [];
+      c.people.forEach(function (p) { if (!p.status) p.status = "red"; });
+    });
+    if (typeof s.rev !== "number") s.rev = 0;
+    return s;
+  }
+
+  // Optional change hook (used by team sync to push after local edits).
+  var changeHook = null, suppressHook = false;
+
   function load() {
     if (state) return state;
     try {
       var raw = localStorage.getItem(KEY);
       if (raw) {
-        state = JSON.parse(raw);
-        // backfill any missing keys after upgrades
-        state.settings = Object.assign({}, DEFAULT_SETTINGS, state.settings || {});
-        state.prices = Object.assign({}, DEFAULT_PRICES, state.prices || {});
-        state.prices.rows = Object.assign({}, DEFAULT_PRICES.rows, state.prices.rows || {});
-        if (!Array.isArray(state.companies)) state.companies = [];
-        state.companies.forEach(function (c) { if (!Array.isArray(c.people)) c.people = []; });
+        state = normalize(JSON.parse(raw));
         return state;
       }
     } catch (e) {
@@ -116,6 +130,7 @@ window.App = window.App || {};
     } catch (e) {
       console.error("Save failed (storage full or blocked).", e);
     }
+    if (changeHook && !suppressHook) { try { changeHook(); } catch (e) {} }
   }
 
   var Store = {
@@ -171,7 +186,8 @@ window.App = window.App || {};
         c.people.push({
           name: p.name || "", title: p.title || "", seniority: p.seniority || "",
           email: p.email || "", phone: p.phone || "", linkedin: p.linkedin || "",
-          locked: !!p.locked
+          locked: !!p.locked,
+          status: "red", lastEmailAt: null, lastReplyAt: null
         });
         added++;
       });
@@ -186,7 +202,16 @@ window.App = window.App || {};
     },
     removePerson: function (id, index) {
       var c = this.companyById(id);
-      if (c && c.people) { c.people.splice(index, 1); save(); }
+      if (c && c.people) { c.people.splice(index, 1); rollupCompany(c); save(); }
+    },
+
+    // Set a single contact's traffic-light status, then roll the company up.
+    setPersonStatus: function (id, index, status, extra) {
+      var c = this.companyById(id);
+      if (!c || !c.people || !c.people[index]) return;
+      Object.assign(c.people[index], { status: status }, extra || {});
+      rollupCompany(c);
+      save();
     },
 
     // Merge a {nameLower: phone} map (from the async webhook) into a company's people.
@@ -295,8 +320,42 @@ window.App = window.App || {};
     resetAll: function () {
       state = freshState();
       save();
-    }
+    },
+
+    /* ---------- Team sync hooks ---------- */
+    setChangeHook: function (fn) { changeHook = fn; },
+    rev: function () { return load().rev || 0; },
+    // Replace local state with a teammate's pulled state (no push echo).
+    applyRemote: function (payload) {
+      if (!payload || !payload.state || !Array.isArray(payload.state.companies)) return false;
+      suppressHook = true;
+      state = normalize(payload.state);
+      if (typeof payload.rev === "number") state.rev = payload.rev;
+      save();
+      suppressHook = false;
+      return true;
+    },
+    // Bump the revision before a push so the server can order writes.
+    bumpRev: function () { var s = load(); s.rev = (s.rev || 0) + 1; suppressHook = true; save(); suppressHook = false; return s.rev; }
   };
+
+  // Company status = the "best" of its contacts (green > yellow > red).
+  // Only rolls up when there are people; carries lastReplyAt/lastEmailAt across.
+  var STATUS_RANK = { red: 0, yellow: 1, green: 2 };
+  function rollupCompany(c) {
+    if (!c.people || !c.people.length) return;
+    var best = "red", bestRank = -1, replyAt = c.lastReplyAt, emailAt = c.lastEmailAt;
+    c.people.forEach(function (p) {
+      var rank = STATUS_RANK[p.status] || 0;
+      if (rank > bestRank) { bestRank = rank; best = p.status; }
+      if (p.lastReplyAt && (!replyAt || p.lastReplyAt > replyAt)) replyAt = p.lastReplyAt;
+      if (p.lastEmailAt && (!emailAt || p.lastEmailAt > emailAt)) emailAt = p.lastEmailAt;
+    });
+    c.status = best;
+    c.lastReplyAt = replyAt || c.lastReplyAt;
+    c.lastEmailAt = emailAt || c.lastEmailAt;
+  }
+  App.rollupCompany = rollupCompany;
 
   // materials column can be "copper-cathode;al-sows" or "Copper cathode, Aluminium sows"
   function parseMaterials(val) {

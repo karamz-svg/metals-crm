@@ -268,11 +268,22 @@ window.App = window.App || {};
         ? '<span class="person-mail" data-action="person-email" data-id="' + c.id + '" data-idx="' + idx + '" title="Email ' + esc(p.name) + '">✉️</span>'
         : (p.locked ? '<span class="person-locked" title="Email locked in Apollo — enable Reveal in Settings">🔒</span>' : "");
       var li = p.linkedin ? ' <a href="' + esc(p.linkedin) + '" target="_blank" rel="noopener" title="LinkedIn">in</a>' : "";
+      var thread = p.email
+        ? '<span class="person-thread" data-action="person-thread" data-id="' + c.id + '" data-idx="' + idx + '" title="Open this contact\'s Gmail thread">🔎</span>' : "";
+      var pst = p.status || "red";
+      var lights = ["red", "yellow", "green"].map(function (st) {
+        return '<button class="plight ' + st + (pst === st ? " on" : "") +
+          '" data-action="person-status" data-id="' + c.id + '" data-idx="' + idx + '" data-status="' + st + '" title="' +
+          ({ red: "Not contacted", yellow: "Awaiting reply", green: "Replied" }[st]) + '"></button>';
+      }).join("");
       return '<div class="person">' +
         '<span class="p-name">' + esc(p.name || "—") + "</span>" +
         '<span class="p-title">' + esc(p.title || "") + "</span>" +
         (p.email ? '<span class="p-email">' + esc(p.email) + "</span>" : "") +
-        '<span class="p-actions">' + mail + li +
+        (p.phone ? '<span class="p-email">📞 ' + esc(p.phone) + "</span>" : "") +
+        '<span class="p-actions">' +
+          '<span class="plights">' + lights + "</span>" +
+          mail + thread + li +
           '<span class="person-del" data-action="del-person" data-id="' + c.id + '" data-idx="' + idx + '" title="Remove">✕</span>' +
         "</span></div>";
     }).join("");
@@ -360,7 +371,16 @@ window.App = window.App || {};
           '<button class="btn" data-action="import">⇪ Import CSV / JSON</button>' +
           '<button class="btn" data-action="export">⇩ Export backup (JSON)</button>' +
           '<button class="btn danger" data-action="reset">Reset all data</button>' +
-        "</div></div>";
+        "</div></div>" +
+      '<div class="card" style="max-width:640px;margin-top:16px;"><h3>👥 Team sync (shared data)</h3>' +
+        '<div class="meta">Share buyers, statuses and prices with teammates via the proxy. Everyone points at the same proxy URL and turns this on. Last-write-wins — click <strong>Pull</strong> to grab the latest before a big edit. Protect it with a token (proxy <span class="kbd">DATA_AUTH_TOKEN</span>).</div>' +
+        '<label class="check" style="margin:12px 0;"><input type="checkbox" data-set-bool="teamSync"' + (s.teamSync ? " checked" : "") + '> Enable team sync</label>' +
+        '<div class="field"><label>Sync server URL (blank = use the Apollo proxy URL above)</label><input data-set="syncServerUrl" value="' + esc(s.syncServerUrl || "") + '" placeholder="http://localhost:8787"/></div>' +
+        '<div class="field"><label>Shared token (optional)</label><input data-set="syncToken" value="' + esc(s.syncToken || "") + '" placeholder="matches proxy DATA_AUTH_TOKEN"/></div>' +
+        '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
+          '<button class="btn" data-action="team-pull">⬇ Pull from team</button>' +
+          '<button class="btn" data-action="team-push">⬆ Push to team</button></div>' +
+      "</div>";
   }
 
   /* =========================================================
@@ -545,6 +565,15 @@ window.App = window.App || {};
       }
       var greens = 0, yellows = 0;
       companies.forEach(function (c) {
+        // Update each discovered contact individually first.
+        (c.people || []).forEach(function (p, idx) {
+          if (!p.email) return;
+          var r = results[p.email.toLowerCase()];
+          if (!r) return;
+          if (r.replied && p.status !== "green") { Store.setPersonStatus(c.id, idx, "green", { lastReplyAt: Date.now() }); }
+          else if (r.contacted && (p.status || "red") === "red") { Store.setPersonStatus(c.id, idx, "yellow", { lastEmailAt: p.lastEmailAt || Date.now() }); }
+        });
+        // Then the company headline (its own primary email, or rolled up from people).
         var mine = companyEmails(c);
         var replied = mine.some(function (e) { return results[e] && results[e].replied; });
         var contacted = mine.some(function (e) { return results[e] && results[e].contacted; });
@@ -750,11 +779,25 @@ window.App = window.App || {};
       }
 
       case "person-email": {
-        var person = (company.people || [])[Number(a.getAttribute("data-idx"))];
+        var pidx = Number(a.getAttribute("data-idx"));
+        var person = (company.people || [])[pidx];
         if (!person || !person.email) { toast("No email for this person."); break; }
         window.open(Email.composeUrl(company, person), "_blank");
-        if (company.status === "red") Store.setStatus(id, "yellow", { lastEmailAt: Date.now() });
+        if ((person.status || "red") === "red") Store.setPersonStatus(id, pidx, "yellow", { lastEmailAt: Date.now() });
         render(); toast("Opened Gmail to " + person.name + ".");
+        break;
+      }
+
+      case "person-status":
+        Store.setPersonStatus(id, Number(a.getAttribute("data-idx")), a.getAttribute("data-status"),
+          a.getAttribute("data-status") === "yellow" ? { lastEmailAt: Date.now() } :
+          a.getAttribute("data-status") === "green" ? { lastReplyAt: Date.now() } : {});
+        render();
+        break;
+
+      case "person-thread": {
+        var tp = (company.people || [])[Number(a.getAttribute("data-idx"))];
+        if (tp && tp.email) window.open(Email.threadUrl({ email: tp.email, name: tp.name }), "_blank");
         break;
       }
 
@@ -785,6 +828,22 @@ window.App = window.App || {};
 
       case "sync-gmail":
         syncGmail();
+        break;
+
+      case "team-pull":
+        if (!App.Sync.enabled()) { toast("Enable team sync first (and Save)."); break; }
+        toast("Pulling team data…");
+        App.Sync.pull().then(function (j) {
+          if (j && j.state && Store.applyRemote(j)) { render(); toast("Pulled latest team data."); }
+          else toast("No shared data on the server yet — push first.");
+        }).catch(function (e) { toast(e.message); });
+        break;
+
+      case "team-push":
+        if (!App.Sync.enabled()) { toast("Enable team sync first (and Save)."); break; }
+        toast("Pushing to team…");
+        App.Sync.push().then(function (j) { toast("Pushed (rev " + (j.rev || "?") + ")."); })
+          .catch(function (e) { toast(e.message); });
         break;
 
       case "import": importForm(); break;
@@ -850,7 +909,11 @@ window.App = window.App || {};
   }
 
   /* boot */
-  function boot() { render(); setTimeout(autoScanPrices, 700); }
+  function boot() {
+    render();
+    setTimeout(autoScanPrices, 700);
+    if (App.Sync) App.Sync.init(function () { render(); toast("Pulled latest team data."); });
+  }
   document.addEventListener("DOMContentLoaded", boot);
   if (document.readyState !== "loading") boot();
 

@@ -452,13 +452,31 @@ if (PRICE_PROVIDER && PRICE_PROVIDER !== "mock") {
   if (t.unref) t.unref();
 }
 
+/* ---------------- Team data store (optional) ----------------
+   Shares the app's whole state between teammates. File-backed
+   (.data-store.json, git-ignored), last-write-wins, with an
+   optional shared-secret token. Point every teammate's app at
+   this proxy URL and enable "Team sync" in Settings. */
+const DATA_FILE = path.join(__dirname, "..", ".data-store.json");
+const DATA_AUTH_TOKEN = process.env.DATA_AUTH_TOKEN || "";
+function loadData() {
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); } catch (e) { return { state: null, rev: 0, updatedAt: 0 }; }
+}
+function saveData(obj) {
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(obj)); } catch (e) { console.error("[data] save failed:", e.message); }
+}
+function dataAuthOK(req) {
+  if (!DATA_AUTH_TOKEN) return true;
+  return (req.headers["x-data-token"] || "") === DATA_AUTH_TOKEN;
+}
+
 /* ---------------- server ---------------- */
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, {});
   const path = req.url.split("?")[0];
 
   if (req.method === "GET" && path === "/health") {
-    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE, priceProvider: PRICE_PROVIDER || "none" });
+    return send(res, 200, { ok: true, mock: MOCK, hasKey: !!API_KEY, webhookConfigured: !!WEBHOOK_BASE_URL, gmailConfigured: HAS_GOOGLE, priceProvider: PRICE_PROVIDER || "none", teamSync: true, teamSyncProtected: !!DATA_AUTH_TOKEN });
   }
 
   if (req.method === "GET" && path === "/api/prices") {
@@ -468,6 +486,26 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, data);
     } catch (e) {
       return send(res, 400, { error: e.message });
+    }
+  }
+
+  // ---- Team data store (shared state) ----
+  if (path === "/api/data") {
+    if (!dataAuthOK(req)) return send(res, 401, { error: "Bad or missing X-Data-Token." });
+    if (req.method === "GET") {
+      return send(res, 200, loadData());
+    }
+    if (req.method === "PUT" || req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        if (!body.state || !Array.isArray(body.state.companies)) return send(res, 400, { error: "Missing/invalid state." });
+        const prev = loadData();
+        const rec = { state: body.state, rev: (prev.rev || 0) + 1, updatedAt: Date.now() };
+        saveData(rec);
+        return send(res, 200, { rev: rec.rev, updatedAt: rec.updatedAt });
+      } catch (e) {
+        return send(res, 400, { error: e.message });
+      }
     }
   }
 
@@ -553,6 +591,7 @@ server.listen(PORT, () => {
   console.log("  phone webhook:", WEBHOOK_BASE_URL ? (WEBHOOK_BASE_URL + "/api/apollo-webhook") : "disabled (set WEBHOOK_BASE_URL)");
   console.log("  gmail:", HAS_GOOGLE ? ("configured · redirect " + GOOGLE_REDIRECT_URI) : "disabled (set GOOGLE_CLIENT_ID/SECRET)");
   console.log("  prices:", PRICE_PROVIDER ? (PRICE_PROVIDER + " · refresh every " + (PRICE_REFRESH_MS / 3600000) + "h") : "disabled (set PRICE_PROVIDER)");
-  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones, GET /api/prices,");
+  console.log("  team sync:", "enabled" + (DATA_AUTH_TOKEN ? " (token-protected)" : " (open — set DATA_AUTH_TOKEN to protect)"));
+  console.log("  endpoints: GET /health, POST /api/find-buyers, POST /api/apollo-webhook, GET /api/phones, GET /api/prices, GET|PUT /api/data,");
   console.log("             GET /api/gmail/status, GET /api/gmail/auth, GET /api/gmail/callback, POST /api/gmail/check");
 });

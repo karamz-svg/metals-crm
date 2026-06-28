@@ -21,6 +21,7 @@ European Union. It runs entirely in your browser — no install, no build step, 
 | **EU aluminium duty-paid premium** shown next to the aluminium price | ✅ |
 | **"Send email"** → opens Gmail with a **pre-written** message (products + today's prices) | ✅ |
 | **Traffic-light status** 🔴 not contacted · 🟡 awaiting reply · 🟢 replied | ✅ |
+| **Per-contact traffic lights** — each procurement contact tracked separately; company rolls up | ✅ |
 | Click 🟢 / **View thread** → jumps to that buyer's Gmail conversation | ✅ |
 | **Import** buyers from CSV (incl. Apollo.io exports) · **Export** JSON backup | ✅ |
 | Search & filter, dashboard stats, reply notifications | ✅ |
@@ -66,6 +67,10 @@ This repo ships with a GitHub Actions workflow (`.github/workflows/deploy-pages.
 - 🟡 **Yellow** — email sent, awaiting reply. *(Clicking "Send email" auto-moves a red buyer to yellow.)*
 - 🟢 **Green** — they replied. A pulsing **"📬 Read reply"** badge appears; click it (or **View thread**)
   to jump straight to the Gmail conversation with that buyer.
+
+**Per-contact lights:** once you add procurement contacts (via Apollo), each person gets their **own**
+mini traffic light, ✉️ email button and 🔎 thread link. The company's headline light automatically
+**rolls up** to the best of its contacts (🟢 if anyone replied, else 🟡 if anyone was emailed).
 
 You set the status with one click on any light. Fully **automatic** reply-detection (inbox →
 auto-green) requires the Gmail API — see *Upgrade paths* below.
@@ -186,6 +191,29 @@ running the proxy in `MOCK=1` to see the sync flow.
 
 ---
 
+## 👥 Team sync (shared data, optional)
+
+By default each browser keeps its own data. To let a **team share one buyer list**, the proxy can
+store the whole app state and serve it to everyone pointed at the same proxy.
+
+### Setup
+1. Run the proxy somewhere your team can reach (locally for one machine, or deploy it / tunnel it).
+2. (Recommended) protect it with a shared secret in `.env`:
+   ```bash
+   DATA_AUTH_TOKEN=choose-a-long-random-string
+   ```
+3. In each teammate's app: **Settings → Team sync → Enable**, set the **Sync server URL** (blank uses
+   the Apollo proxy URL) and the **same token**, then **Save**.
+
+### How it behaves
+- On load, the app **pulls** the shared state. Local edits are **pushed** automatically (debounced).
+- Buttons **⬇ Pull from team** / **⬆ Push to team** let you sync on demand.
+- It's **last-write-wins** — ideal for a small desk (1–3 people). Click **Pull** before a big editing
+  session so you start from the latest. For heavy concurrent editing, move to a real database
+  (the `Store` module is the single integration point).
+
+---
+
 ## 💱 Prices (live, scanned daily)
 
 The board at the **top of every page** shows LME Copper, Aluminium (+ EU duty-paid premium), Zinc,
@@ -245,7 +273,7 @@ hand under **Update prices**. (No key needed to try it: run the proxy with `MOCK
 | **Procurement/buyer contacts per company** | ✅ Built in via the Apollo proxy (see above). Emails/phones need the *Reveal* toggle (uses credits). |
 | **Auto "replied → green"** + status sync | ✅ Built in via Gmail read-only OAuth (see "Gmail auto-status"). |
 | **Live LME / SMM prices** | ✅ Built in via the proxy price adapter (Metals-API or your own feed; scanned daily). Official real-time LME/SMM still needs a licensed feed. |
-| **Multi-user / shared team data** | Swap `localStorage` for a hosted database (the `Store` module is the single integration point). |
+| **Multi-user / shared team data** | ✅ Built in via the proxy `/api/data` store (last-write-wins). For heavy concurrent use, swap in a hosted database — the `Store` module is the single integration point. |
 
 ---
 
@@ -270,6 +298,7 @@ metals-crm/
         ├── email.js        # Gmail compose + thread links, pre-written drafts
         ├── apollo.js       # front-end client for the Apollo proxy
         ├── gmail.js        # front-end client for Gmail auto-status
+        ├── sync.js         # front-end client for team sync (shared data)
         └── app.js          # views, routing, all interactivity
 ```
 

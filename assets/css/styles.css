@@ -231,10 +231,18 @@ a:hover { text-decoration: underline; }
 .person .p-title { grid-column: 1; color: var(--muted); font-size: 12px; }
 .person .p-email { grid-column: 1; color: var(--accent-2); font-size: 12px; word-break: break-all; }
 .person .p-actions { grid-column: 2; grid-row: 1 / span 3; display: flex; align-items: center; gap: 8px; }
-.person-mail, .person-del, .person-locked { cursor: pointer; font-size: 14px; }
+.person-mail, .person-del, .person-locked, .person-thread { cursor: pointer; font-size: 14px; }
 .person-del { color: var(--muted); }
 .person-del:hover { color: var(--red); }
-.person-mail:hover { transform: scale(1.15); }
+.person-mail:hover, .person-thread:hover { transform: scale(1.15); }
+
+/* per-person mini traffic lights */
+.plights { display: inline-flex; gap: 3px; margin-right: 4px; vertical-align: middle; }
+.plight { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--line); background: #1a2433; cursor: pointer; padding: 0; }
+.plight:hover { transform: scale(1.18); }
+.plight.on.red { background: var(--red); border-color: var(--red); }
+.plight.on.yellow { background: var(--yellow); border-color: var(--yellow); }
+.plight.on.green { background: var(--green); border-color: var(--green); box-shadow: 0 0 6px rgba(48,164,108,.55); }
 
 /* ---------- People picker modal ---------- */
 .pick-list { display: flex; flex-direction: column; gap: 8px; }
