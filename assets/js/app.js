@@ -100,17 +100,28 @@ window.App = window.App || {};
     var top =
       item("dashboard", null, "📊", "Dashboard") +
       item("companies", null, "🏢", "All buyers", companies.length) +
+      item("sheet", null, "📝", "Custom sheet", Store.sheetRows().length || null) +
       item("products", null, "🪙", "Products", App.PRODUCTS.length) +
       item("settings", null, "⚙️", "Settings");
 
-    var countryItems = App.COUNTRIES.map(function (c) {
-      var n = companies.filter(function (x) { return x.country === c.code; }).length;
-      return item("country", c.code, c.flag, c.name, n);
-    }).join("");
+    function countWith(code) { return companies.filter(function (x) { return x.country === code; }).length; }
+
+    // EU countries: only show those that actually have buyers (hide empty ones).
+    var euActive = App.COUNTRIES.filter(function (c) { return countWith(c.code) > 0; });
+    var euItems = euActive.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
+    var euSection = euActive.length
+      ? '<div class="nav-section"><div class="label">EU Countries (' + euActive.length + ")</div>" + euItems + "</div>"
+      : "";
+
+    // My countries: always show every custom country the user added.
+    var custom = Store.customCountries();
+    var customItems = custom.map(function (c) { return item("country", c.code, c.flag, c.name, countWith(c.code)); }).join("");
+    var mySection = '<div class="nav-section"><div class="label">My countries</div>' + customItems +
+      '<div class="nav-item" data-action="add-country"><span>＋</span><span>Add country</span></div></div>';
 
     $("nav").innerHTML =
       '<div class="nav-section">' + top + "</div>" +
-      '<div class="nav-section"><div class="label">EU Countries (27)</div>' + countryItems + "</div>";
+      euSection + mySection;
   }
 
   /* =========================================================
@@ -122,6 +133,7 @@ window.App = window.App || {};
     var c = $("content");
     if (route.view === "dashboard") c.innerHTML = viewDashboard();
     else if (route.view === "products") c.innerHTML = viewProducts();
+    else if (route.view === "sheet") c.innerHTML = viewSheet();
     else if (route.view === "settings") c.innerHTML = viewSettings();
     else if (route.view === "companies") c.innerHTML = viewCompanies(null);
     else if (route.view === "country") c.innerHTML = viewCompanies(route.country);
@@ -144,7 +156,10 @@ window.App = window.App || {};
         withReply.map(function (c) { return esc(c.name); }).join(", ") + "</div>"
       : "";
 
-    var tiles = App.COUNTRIES.map(function (c) {
+    // Only countries that have buyers (active EU) plus all custom countries.
+    var euActive = App.COUNTRIES.filter(function (c) { return Store.companiesByCountry(c.code).length > 0; });
+    var tileCountries = euActive.concat(Store.customCountries());
+    var tiles = tileCountries.map(function (c) {
       var list = Store.companiesByCountry(c.code);
       var dots = ["red", "yellow", "green"].map(function (st) {
         var n = list.filter(function (x) { return x.status === st; }).length;
@@ -200,6 +215,40 @@ window.App = window.App || {};
       '<div class="grid cards">' + html + "</div>";
   }
 
+  /* ---- Custom sheet (free-form, Excel-style) ---- */
+  function viewSheet() {
+    var rows = Store.sheetRows();
+    var prodOpts = App.PRODUCTS.map(function (p) { return '<option value="' + esc(p.name) + '">'; }).join("");
+
+    function row(r) {
+      var csel = '<select onchange="App.onSheetEdit(\'' + r.id + '\',\'country\',this.value)">' +
+        '<option value=""' + (!r.country ? " selected" : "") + ">—</option>" +
+        App.allCountries().map(function (x) {
+          return '<option value="' + x.code + '"' + (r.country === x.code ? " selected" : "") + ">" + x.flag + " " + esc(x.name) + "</option>";
+        }).join("") + "</select>";
+      return "<tr>" +
+        '<td><input list="sheet-prod" value="' + esc(r.product) + '" placeholder="product" onchange="App.onSheetEdit(\'' + r.id + '\',\'product\',this.value)"/></td>' +
+        "<td>" + csel + "</td>" +
+        '<td><input value="' + esc(r.material) + '" placeholder="material" onchange="App.onSheetEdit(\'' + r.id + '\',\'material\',this.value)"/></td>' +
+        '<td><input value="' + esc(r.qty) + '" placeholder="qty / MT" onchange="App.onSheetEdit(\'' + r.id + '\',\'qty\',this.value)"/></td>' +
+        '<td><input value="' + esc(r.notes) + '" placeholder="notes" onchange="App.onSheetEdit(\'' + r.id + '\',\'notes\',this.value)"/></td>' +
+        '<td><button class="btn sm danger" data-action="sheet-del" data-id="' + r.id + '">🗑</button></td>' +
+        "</tr>";
+    }
+
+    var body = rows.length
+      ? '<table class="sheet"><thead><tr><th>Product</th><th>Country</th><th>Material</th><th>Qty</th><th>Notes</th><th></th></tr></thead><tbody>' +
+        rows.map(row).join("") + "</tbody></table>"
+      : '<div class="empty"><div class="big">📝</div><p>Empty sheet — add your first row.</p></div>';
+
+    return '<datalist id="sheet-prod">' + prodOpts + "</datalist>" +
+      '<div class="page-head"><div><h2>Custom Sheet</h2>' +
+      '<div class="sub">A free-form tab — log any product, country and material combination, like an extra Excel sheet. Saved automatically.</div></div>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn primary" data-action="sheet-add">+ Add row</button></div>' +
+      body;
+  }
+
   /* ---- Companies (all or by country) ---- */
   function viewCompanies(countryCode) {
     var list = countryCode ? Store.companiesByCountry(countryCode) : Store.companies();
@@ -229,6 +278,8 @@ window.App = window.App || {};
       '<button class="btn" data-action="sync-gmail">📥 Sync Gmail</button>' +
       '<button class="btn" data-action="import">⇪ Import CSV</button>' +
       '<button class="btn" data-action="export">⇩ Export</button>' +
+      ((countryCode && App.countryByCode(countryCode) && App.countryByCode(countryCode).custom)
+        ? '<button class="btn danger" data-action="remove-country" data-country="' + countryCode + '">🗑 Remove country</button>' : "") +
       '<button class="btn primary" data-action="add-company"' + (countryCode ? ' data-country="' + countryCode + '"' : "") + '>+ Add buyer</button></div>';
 
     var legend = '<div class="legend" style="margin-bottom:14px;">' +
@@ -422,7 +473,7 @@ window.App = window.App || {};
   function companyForm(c) {
     c = c || {};
     var isEdit = !!c.id;
-    var countryOpts = App.COUNTRIES.map(function (x) {
+    var countryOpts = App.allCountries().map(function (x) {
       return '<option value="' + x.code + '"' + (c.country === x.code ? " selected" : "") + ">" + x.flag + " " + esc(x.name) + "</option>";
     }).join("");
     var checks = App.PRODUCTS.map(function (p) {
@@ -454,6 +505,18 @@ window.App = window.App || {};
       '<button class="btn primary" data-action="save-company" data-id="' + (c.id || "") + '">' + (isEdit ? "Save changes" : "Add buyer") + "</button>";
 
     openModal(isEdit ? "Edit buyer" : "Add buyer", body, footer);
+  }
+
+  function countryForm() {
+    var body =
+      '<div class="meta" style="margin-bottom:12px;">Add a market that isn\'t in the EU list (e.g. UK, Turkey, USA, UAE). It appears under <strong>My countries</strong> and in the buyer form.</div>' +
+      '<div class="field-2">' +
+        '<div class="field"><label>Country name</label><input data-cf="name" placeholder="e.g. Türkiye"/></div>' +
+        '<div class="field"><label>Flag emoji (optional)</label><input data-cf="flag" placeholder="🇹🇷" maxlength="4"/></div>' +
+      "</div>";
+    var footer = '<button class="btn" data-action="close-modal">Cancel</button>' +
+      '<button class="btn primary" data-action="save-country">Add country</button>';
+    openModal("Add a country", body, footer);
   }
 
   function pricesForm() {
@@ -713,6 +776,31 @@ window.App = window.App || {};
       case "add-company":
         companyForm({ country: a.getAttribute("data-country") || (route.country || "DE") });
         break;
+
+      case "add-country": countryForm(); break;
+      case "save-country": {
+        var cm = a.closest(".modal");
+        var nm = cm.querySelector("[data-cf=name]").value.trim();
+        var fl = cm.querySelector("[data-cf=flag]").value.trim();
+        if (!nm) { toast("Enter a country name."); break; }
+        var nc = Store.addCustomCountry(nm, fl);
+        closeModal();
+        route = { view: "country", country: nc.code };
+        render(); toast("Added " + nc.name + " — add buyers to it now.");
+        break;
+      }
+      case "remove-country": {
+        var rc = App.countryByCode(a.getAttribute("data-country"));
+        if (rc && confirm("Remove " + rc.name + " and its buyers from the app?")) {
+          Store.removeCustomCountry(rc.code);
+          route = { view: "dashboard", country: null };
+          render(); toast(rc.name + " removed.");
+        }
+        break;
+      }
+
+      case "sheet-add": Store.addSheetRow(); render(); break;
+      case "sheet-del": Store.deleteSheetRow(id); render(); break;
       case "edit-company": companyForm(company); break;
 
       case "save-company": {
@@ -956,6 +1044,11 @@ window.App = window.App || {};
         break;
     }
   });
+
+  App.onSheetEdit = function (id, field, value) {
+    var patch = {}; patch[field] = value;
+    App.Store.updateSheetRow(id, patch);
+  };
 
   App.onSearch = function (v) { query = v; var c = $("content");
     // re-render only the cards area to keep input focus

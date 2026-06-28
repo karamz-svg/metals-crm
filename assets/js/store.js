@@ -91,7 +91,9 @@ window.App = window.App || {};
       version: 1,
       settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
       prices: JSON.parse(JSON.stringify(DEFAULT_PRICES)),
-      companies: companies
+      companies: companies,
+      customCountries: [],
+      sheet: []
     };
   }
 
@@ -107,6 +109,8 @@ window.App = window.App || {};
       if (!Array.isArray(c.people)) c.people = [];
       c.people.forEach(function (p) { if (!p.status) p.status = "red"; });
     });
+    if (!Array.isArray(s.customCountries)) s.customCountries = [];
+    if (!Array.isArray(s.sheet)) s.sheet = [];
     if (typeof s.rev !== "number") s.rev = 0;
     return s;
   }
@@ -326,6 +330,36 @@ window.App = window.App || {};
     resetAll: function () {
       state = freshState();
       save();
+    },
+
+    /* ---------- Custom countries ---------- */
+    customCountries: function () { var s = load(); if (!s.customCountries) s.customCountries = []; return s.customCountries; },
+    addCustomCountry: function (name, flag) {
+      var s = load(); if (!s.customCountries) s.customCountries = [];
+      var code = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4);
+      var c = { code: code, name: (name || "New country").trim(), flag: (flag || "🌍").trim() || "🌍", custom: true };
+      s.customCountries.push(c); save(); return c;
+    },
+    removeCustomCountry: function (code) {
+      var s = load();
+      s.customCountries = (s.customCountries || []).filter(function (c) { return c.code !== code; });
+      s.companies = s.companies.filter(function (c) { return c.country !== code; });
+      save();
+    },
+
+    /* ---------- Custom sheet ---------- */
+    sheetRows: function () { var s = load(); if (!s.sheet) s.sheet = []; return s.sheet; },
+    addSheetRow: function (data) {
+      var s = load(); if (!s.sheet) s.sheet = [];
+      var r = Object.assign({ id: uid(), product: "", country: "", material: "", qty: "", notes: "" }, data || {});
+      s.sheet.push(r); save(); return r;
+    },
+    updateSheetRow: function (id, patch) {
+      var r = (load().sheet || []).find(function (x) { return x.id === id; });
+      if (r) { Object.assign(r, patch); save(); }
+    },
+    deleteSheetRow: function (id) {
+      var s = load(); s.sheet = (s.sheet || []).filter(function (x) { return x.id !== id; }); save();
     },
 
     /* ---------- Team sync hooks ---------- */

@@ -29,6 +29,8 @@ European Union. It runs entirely in your browser — no install, no build step, 
 | **EU starter list** — one click loads ~50 real EU non-ferrous producers/recyclers as research leads | ✅ |
 | **Gmail auto-status** — connect Gmail (read-only) to auto-set 🟡/🟢 from your inbox | ✅ |
 | **Auto-deploy** to GitHub Pages on every push (included workflow) | ✅ |
+| **Custom countries** — add markets outside the EU (UK, Türkiye, USA…); empty EU countries auto-hide | ✅ |
+| **Custom Sheet** — a free-form Excel-style tab for product/country/material rows | ✅ |
 
 Your data is saved locally in your browser (`localStorage`). Use **Export** to back it up or move
 it between devices.
@@ -110,6 +112,20 @@ On any country page, click **🔎 Discover companies** to have Apollo return **r
 country/industry (name + website). Tick the ones you want → they're added → then **Find buyers (all)**
 fills their verified emails. This is the non-fabricated way to build toward ~25 buyers per country
 without inventing anything. (Needs your Apollo key; works in `MOCK=1` to preview the flow.)
+
+### On the Apollo FREE plan (important)
+Apollo's **search/enrichment API requires a "master API key", and API access is a paid feature** —
+the free plan blocks those endpoints. So the in-app **Find buyers** / **Discover companies** buttons
+(which call the API) **won't work on a free plan**. You do **not** need to type companies one-by-one,
+though — use Apollo's website to bulk-export, then import:
+1. In the **Apollo web app**, run a People search with filters (job titles like *procurement/buyer/
+   trader*, plus company location/industry).
+2. **Select results in bulk → Save to a list → Export to CSV** (the free plan includes a limited
+   monthly allotment of email/export credits — check your account's Credits page).
+3. In this app: **Import → paste the CSV** (it maps name, country, email, phone, website, materials).
+
+To use the one-click in-app automation instead, you'd need a paid Apollo tier that includes API
+access + a master key.
 
 ---
 
