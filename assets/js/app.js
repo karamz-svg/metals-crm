@@ -37,50 +37,49 @@ window.App = window.App || {};
      ========================================================= */
   function renderPriceBar() {
     var p = Store.prices();
-    function chip(label, val, extra) {
-      return '<div class="chip ' + (extra || "") + '">' +
-        '<span class="k">' + esc(label) + "</span>" +
-        '<span class="v">' + (val == null ? "—" : val) + "</span></div>";
+    var dateStr = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—";
+
+    function changeHtml(row) {
+      var pct = Prices.changePct(row);
+      if (pct == null) return "";
+      var cls = pct > 0 ? "up" : (pct < 0 ? "down" : "flat");
+      var sign = pct > 0 ? "+" : "";
+      return ' <span class="tk-chg ' + cls + '">' + sign + pct.toFixed(2) + "%</span>";
     }
-    var chips = "";
-    App.PRICE_ROWS.forEach(function (row) {
-      var r = p.rows[row.key] || {};
-      var m = metal(row.metal);
-      var v = Prices.fmt(r.value);
-      chips += '<div class="chip">' +
-        '<span class="k"><span class="dot" style="background:' + m.color + '"></span>' + esc(row.label) + "</span>" +
-        '<span class="v">' + (r.value == null ? "—" : v + ' <small>' + esc(p.currency) + "/MT</small>") + "</span></div>";
-      if (row.hasPremium) {
-        chips += '<div class="chip premium">' +
-          '<span class="k">↳ EU duty-paid premium</span>' +
-          '<span class="v">' + (r.premium == null ? "—" : "+" + Prices.fmt(r.premium) + ' <small>' + esc(p.currency) + "/MT</small>") + "</span></div>";
+
+    var cards = App.TICKER.map(function (t) {
+      var row = p.rows[t.key] || {};
+      var val, sub, chg = "";
+      if (t.kind === "premium") {
+        val = row.premium;
+        sub = esc(t.unit);
+      } else {
+        val = row.value;
+        chg = changeHtml(row);
+        sub = esc(p.currency) + " " + esc(t.unit) + " · " + esc(dateStr);
       }
-    });
+      var priceTxt = (val == null) ? "—" : (t.kind === "premium" && t.key === "copper")
+        ? "$" + Prices.fmt(val)               // copper premium often a range; plain
+        : "$" + Prices.fmt(val);
+      return '<div class="tk">' +
+        '<div class="tk-label">' + esc(t.label) + "</div>" +
+        '<div class="tk-price">' + priceTxt + chg + "</div>" +
+        '<div class="tk-sub">' + sub + "</div>" +
+      "</div>";
+    }).join("");
 
-    // Extra premiums for other metals (from a premium feed), shown after the metals.
-    var prem = p.premiums || {};
-    Object.keys(prem).forEach(function (k) {
-      if (k === "aluminium") return; // already shown next to aluminium
-      if (prem[k] == null || isNaN(prem[k])) return;
-      var label = (App.METALS[k] && App.METALS[k].label) || k;
-      chips += '<div class="chip premium">' +
-        '<span class="k">↳ ' + esc(label) + " premium</span>" +
-        '<span class="v">+' + Prices.fmt(prem[k]) + ' <small>' + esc(p.currency) + "/MT</small></span></div>";
-    });
-
-    var liveLabel = (Store.settings().autoScanPrices !== false) ? " · auto-scan daily" : "";
-    var delayed = p.delayed ? " · delayed/indicative" : "";
+    var live = Store.settings().priceLiveSeconds > 0 ? '<span class="tk-live">● LIVE</span>' : "";
+    var delayed = p.delayed ? "delayed/indicative" : "manual";
     var warn = App.priceMsg
-      ? ' <span class="price-warn" data-nav="settings" title="Open price settings">⚠️ ' + esc(App.priceMsg) + " — Set up</span>"
-      : (!p.updatedAt ? ' <span class="price-warn" data-nav="settings">⚠️ Live prices not set up — Set up</span>' : "");
+      ? '<span class="price-warn" data-nav="settings" title="Open price settings">⚠️ ' + esc(App.priceMsg) + "</span>"
+      : (!p.updatedAt ? '<span class="price-warn" data-nav="settings">⚠️ set up live prices</span>' : "");
 
     $("pricebar").innerHTML =
-      '<span class="pb-title">LME&nbsp;Board</span>' +
-      '<div class="ticker">' + chips + "</div>" +
-      '<div class="pb-meta">' +
-        "<span>" + esc(p.source) + delayed + " · " + esc(Prices.ageText(p.updatedAt)) + liveLabel + "</span>" + warn +
-        '<button class="btn sm" data-action="refresh-prices">↻ Live now</button>' +
-        '<button class="btn sm primary" data-action="edit-prices">Update prices</button>' +
+      '<div class="ticker">' + cards + "</div>" +
+      '<div class="pb-meta">' + live +
+        "<span>" + esc(p.source) + " · " + esc(delayed) + "</span>" + warn +
+        '<button class="btn sm" data-action="refresh-prices">↻ Refresh</button>' +
+        '<button class="btn sm primary" data-action="edit-prices">Edit</button>' +
       "</div>";
   }
 
@@ -431,6 +430,7 @@ window.App = window.App || {};
         "</div>" +
         '<label class="check" style="margin:4px 0 12px;"><input type="checkbox" data-set-bool="priceInvert"' + (s.priceInvert !== false ? " checked" : "") + '> Invert rate (1/rate) — keep on for Metals-API</label>' +
         '<label class="check" style="margin:0 0 12px;"><input type="checkbox" data-set-bool="autoScanPrices"' + (s.autoScanPrices !== false ? " checked" : "") + '> Auto-scan prices daily on load</label>' +
+        '<div class="field"><label>Live auto-refresh every (seconds, 0 = off — mind your API quota)</label><input data-set="priceLiveSeconds" value="' + esc(s.priceLiveSeconds != null ? s.priceLiveSeconds : 60) + '" placeholder="60"/></div>' +
         '<div class="btn-row"><button class="btn primary" data-action="save-settings">Save settings</button>' +
           '<button class="btn" data-action="refresh-prices">↻ Fetch prices now</button></div>' +
       "</div>" +
@@ -875,6 +875,7 @@ window.App = window.App || {};
         sc.querySelectorAll("[data-set]").forEach(function (el) { patch[el.getAttribute("data-set")] = el.value.trim(); });
         sc.querySelectorAll("[data-set-bool]").forEach(function (el) { patch[el.getAttribute("data-set-bool")] = el.checked; });
         Store.updateSettings(patch); toast("Settings saved.");
+        if (App.startLiveTicker) App.startLiveTicker();
         break;
       }
 
@@ -1075,11 +1076,26 @@ window.App = window.App || {};
     });
   }
 
+  /* Live ticker: re-fetch prices on an interval so the board updates itself. */
+  function startLiveTicker() {
+    if (App._liveTimer) clearInterval(App._liveTimer);
+    var s = Store.settings();
+    var secs = Number(s.priceLiveSeconds) || 0;
+    if (secs <= 0 || s.priceSource === "manual") return;
+    App._liveTimer = setInterval(function () {
+      Prices.fetchLive(true).then(function (d) {
+        if (d) { App.priceMsg = ""; Store.applyPriceFeed(d); renderPriceBar(); }
+      }).catch(function (err) { App.priceMsg = err.message; renderPriceBar(); });
+    }, Math.max(15, secs) * 1000);
+  }
+  App.startLiveTicker = startLiveTicker;
+
   /* boot */
   function boot() {
     render();
     setTimeout(autoScanPrices, 700);
     if (App.Sync) App.Sync.init(function () { render(); toast("Pulled latest team data."); });
+    startLiveTicker();
   }
   document.addEventListener("DOMContentLoaded", boot);
   if (document.readyState !== "loading") boot();

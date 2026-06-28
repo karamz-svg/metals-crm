@@ -26,6 +26,7 @@ window.App = window.App || {};
     priceInvert: true,          // Metals-API returns base/symbol -> use 1/rate
     priceUnit: "tonne",         // tonne | lb | oz (converted to per-tonne)
     priceMult: 1,               // final calibration multiplier
+    priceLiveSeconds: 60,       // auto-refresh interval for the live ticker (0 = off)
     teamSync: false,            // share data with teammates via the proxy /api/data
     syncServerUrl: "",          // defaults to the Apollo proxy URL when blank
     syncToken: ""               // optional shared secret (matches proxy DATA_AUTH_TOKEN)
@@ -41,11 +42,12 @@ window.App = window.App || {};
     delayed: false,
     premiums: {},
     rows: {
-      copper:    { value: null },
-      aluminium: { value: null, premium: null },
-      zinc:      { value: null },
-      lead:      { value: null },
-      nickel:    { value: null }
+      copper:    { value: null, prev: null, premium: null },
+      aluminium: { value: null, prev: null, premium: null },
+      zinc:      { value: null, prev: null },
+      lead:      { value: null, prev: null },
+      nickel:    { value: null, prev: null },
+      gold:      { value: null, prev: null }
     }
   };
 
@@ -255,7 +257,11 @@ window.App = window.App || {};
     },
     setPriceRow: function (key, partial) {
       var p = load().prices;
-      p.rows[key] = Object.assign({}, p.rows[key], partial);
+      var cur = p.rows[key] || {};
+      if (partial && partial.value != null && cur.value != null && Number(partial.value) !== Number(cur.value)) {
+        partial = Object.assign({ prev: cur.value }, partial);
+      }
+      p.rows[key] = Object.assign({}, cur, partial);
       p.updatedAt = Date.now();
       save();
     },
@@ -264,13 +270,21 @@ window.App = window.App || {};
     applyPriceFeed: function (d) {
       if (!d) return;
       var p = load().prices;
-      ["copper", "aluminium", "zinc", "lead", "nickel"].forEach(function (k) {
-        if (d[k] != null && !isNaN(d[k])) p.rows[k] = Object.assign({}, p.rows[k], { value: Number(d[k]) });
+      ["copper", "aluminium", "zinc", "lead", "nickel", "gold"].forEach(function (k) {
+        if (d[k] != null && !isNaN(d[k])) {
+          var old = p.rows[k] && p.rows[k].value;
+          p.rows[k] = Object.assign({}, p.rows[k], {
+            prev: (old != null ? old : (p.rows[k] && p.rows[k].prev)) ,
+            value: Number(d[k])
+          });
+        }
       });
-      if (d.premium != null && !isNaN(d.premium)) {
-        p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(d.premium) });
-      }
-      if (d.premiums && typeof d.premiums === "object") p.premiums = d.premiums;
+      // premiums: aluminium (duty-paid EU) and copper (CIF-EU equivalent)
+      if (d.premium != null && !isNaN(d.premium)) p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(d.premium) });
+      var prem = d.premiums || {};
+      if (prem.aluminium != null) p.rows.aluminium = Object.assign({}, p.rows.aluminium, { premium: Number(prem.aluminium) });
+      if (prem.copper != null) p.rows.copper = Object.assign({}, p.rows.copper, { premium: Number(prem.copper) });
+      p.premiums = prem;
       if (d.currency) p.currency = d.currency;
       p.delayed = !!d.delayed;
       p.source = d.source || "Live feed";

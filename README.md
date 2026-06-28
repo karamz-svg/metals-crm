@@ -236,7 +236,13 @@ store the whole app state and serve it to everyone pointed at the same proxy.
 
 ---
 
-## 💱 Prices (live, scanned daily)
+## 💱 Prices (live ticker, scanned daily)
+
+The board at the **top of every page** is a trading-desk style **ticker**: LME Copper, Aluminium,
+Zinc, Lead, Nickel (3M), Gold spot, plus **AL premium DP-EU** and **CU eq premium CIF-EU** — each
+with its price, a green/red **% change**, and a `/MT · date` subline. It **auto-refreshes live**
+(interval set in **Settings → Live prices**, default 60s; set 0 to stop — mind your API quota) and
+also does a daily scan. Prices feed straight into every email draft.
 
 The board at the **top of every page** shows LME Copper, Aluminium (+ EU duty-paid premium), Zinc,
 Lead and Nickel, and is embedded into every email draft. You can always click **Update prices** to

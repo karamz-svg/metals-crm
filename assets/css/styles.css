@@ -68,13 +68,32 @@ a:hover { text-decoration: underline; }
 /* ---------- Price bar (pinned top) ---------- */
 .pricebar {
   position: sticky; top: 0; z-index: 20;
-  background: linear-gradient(180deg, #16202d, #131c27);
+  background: linear-gradient(180deg, #10171f, #0c1219);
   border-bottom: 1px solid var(--line);
-  padding: 10px 22px;
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 0; display: flex; align-items: stretch; gap: 0;
 }
 .pricebar .pb-title { font-weight: 700; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-.ticker { display: flex; gap: 10px; flex-wrap: wrap; flex: 1; }
+
+/* horizontal trading-desk ticker */
+.ticker { display: flex; flex: 1; overflow-x: auto; align-items: stretch; }
+.ticker::-webkit-scrollbar { height: 6px; }
+.ticker::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.tk {
+  padding: 12px 20px 11px; min-width: 150px; flex: 0 0 auto;
+  border-right: 1px solid rgba(255,255,255,.06); display: flex; flex-direction: column; justify-content: center; gap: 3px;
+}
+.tk-label { font-size: 11px; letter-spacing: .06em; color: #8b97a6; text-transform: uppercase; white-space: nowrap; }
+.tk-price {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 21px; font-weight: 700; color: #f3f6fa; white-space: nowrap; line-height: 1.1;
+}
+.tk-chg { font-family: inherit; font-size: 12.5px; font-weight: 700; margin-left: 4px; }
+.tk-chg.up { color: #46d07f; }
+.tk-chg.down { color: #ef5a5a; }
+.tk-chg.flat { color: #8b97a6; }
+.tk-sub { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #6f7c8b; white-space: nowrap; }
+.pb-meta { display: flex; align-items: center; gap: 10px; padding: 0 16px; border-left: 1px solid var(--line); }
+.tk-live { color: #46d07f; font-size: 11px; font-weight: 700; letter-spacing: .05em; animation: pulse 1.6s infinite; }
 .chip {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 6px 11px; display: flex; flex-direction: column; min-width: 96px;

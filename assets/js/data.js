@@ -16,7 +16,8 @@ window.App = window.App || {};
     lead:      { label: "Lead",            color: "#5d6470", lmeKey: "lead" },
     brass:     { label: "Brass / Alloy",   color: "#b89630", lmeKey: null },     // derived from Cu + Zn
     stainless: { label: "Stainless / Ni",  color: "#8a8f98", lmeKey: "nickel" },
-    iron:      { label: "Iron / Steel",    color: "#6b7280", lmeKey: null }
+    iron:      { label: "Iron / Steel",    color: "#6b7280", lmeKey: null },
+    gold:      { label: "Gold",            color: "#d4af37", lmeKey: "gold" }
   };
 
   /* ---- The 25 products you sell ---- */
@@ -99,14 +100,27 @@ window.App = window.App || {};
     return App.COUNTRIES.concat(custom);
   };
 
-  /* ---- LME price rows shown in the panel ---- */
-  // Aluminium also carries an EU duty-paid premium (Fastmarkets MB / LME page).
+  /* ---- LME price rows shown in the manual editor ---- */
   App.PRICE_ROWS = [
-    { key: "copper",    label: "Copper (Grade A)",  metal: "copper" },
-    { key: "aluminium", label: "Aluminium (P1020)", metal: "aluminium", hasPremium: true },
+    { key: "copper",    label: "Copper (Grade A)",  metal: "copper",    hasPremium: true, premiumLabel: "Cu eq premium CIF-EU" },
+    { key: "aluminium", label: "Aluminium (P1020)", metal: "aluminium", hasPremium: true, premiumLabel: "Al premium duty-paid EU" },
     { key: "zinc",      label: "Zinc (SHG)",        metal: "zinc" },
     { key: "lead",      label: "Lead",              metal: "lead" },
-    { key: "nickel",    label: "Nickel",            metal: "stainless" }
+    { key: "nickel",    label: "Nickel",            metal: "stainless" },
+    { key: "gold",      label: "Gold spot",         metal: "gold", unit: "/oz" }
+  ];
+
+  /* ---- The top ticker strip (mirrors a trading-desk board) ---- */
+  // kind: metal (LME/spot price) | premium (regional premium)
+  App.TICKER = [
+    { key: "copper",    label: "LME COPPER (3M)",      metal: "copper",    unit: "/MT", kind: "metal" },
+    { key: "aluminium", label: "LME ALUMINIUM (3M)",   metal: "aluminium", unit: "/MT", kind: "metal" },
+    { key: "zinc",      label: "LME ZINC (3M)",        metal: "zinc",      unit: "/MT", kind: "metal" },
+    { key: "lead",      label: "LME LEAD (3M)",        metal: "lead",      unit: "/MT", kind: "metal" },
+    { key: "nickel",    label: "LME NICKEL (3M)",      metal: "stainless", unit: "/MT", kind: "metal" },
+    { key: "gold",      label: "GOLD SPOT",            metal: "gold",      unit: "/oz", kind: "metal" },
+    { key: "aluminium", label: "AL PREMIUM DP-EU",     metal: "aluminium", unit: "/MT spot · Fastmarkets MB", kind: "premium" },
+    { key: "copper",    label: "CU EQ PREMIUM CIF-EU", metal: "copper",    unit: "/MT · Fastmarkets MB", kind: "premium" }
   ];
 
   /* Reference link for the EU aluminium premium the user mentioned. */

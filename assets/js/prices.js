@@ -28,6 +28,12 @@ window.App = window.App || {};
       return Math.round(cu * 0.60 + zn * 0.37);
     },
 
+    // % change of a row vs its previous value (for the ticker arrows/colors).
+    changePct: function (row) {
+      if (!row || row.value == null || row.prev == null || Number(row.prev) === 0) return null;
+      return (Number(row.value) - Number(row.prev)) / Number(row.prev) * 100;
+    },
+
     ageText: function (ts) {
       if (!ts) return "never updated";
       var mins = Math.round((Date.now() - ts) / 60000);
@@ -98,7 +104,7 @@ window.App = window.App || {};
         return Promise.reject(new Error("Add your Metals-API key in Settings → Live prices (free at metals-api.com)."));
       }
       var map = { copper: "LME-XCU", aluminium: "LME-ALU", zinc: "LME-ZNC", lead: "LME-LEAD", nickel: "LME-NI" };
-      var syms = Object.keys(map).map(function (k) { return map[k]; }).join(",");
+      var syms = Object.keys(map).map(function (k) { return map[k]; }).join(",") + ",XAU";
       var url = "https://metals-api.com/api/latest?access_key=" + encodeURIComponent(s.priceApiKey) +
                 "&base=USD&symbols=" + encodeURIComponent(syms);
       return fetch(url).then(function (r) { return r.json(); }).then(function (j) {
@@ -112,6 +118,9 @@ window.App = window.App || {};
           if (raw == null) raw = rates["USD" + map[metal]];
           out[metal] = Prices.calibrate(raw);
         });
+        // Gold is quoted per troy ounce — no tonne/lb conversion.
+        var graw = rates["XAU"]; if (graw == null) graw = rates["USDXAU"];
+        if (graw != null && !isNaN(graw)) out.gold = Math.round((Number(graw) < 1 ? 1 / graw : Number(graw)));
         if (out.copper == null && out.aluminium == null) {
           throw new Error("Metals-API returned no LME prices — your plan may not include LME symbols.");
         }
