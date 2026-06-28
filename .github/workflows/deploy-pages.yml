@@ -29,6 +29,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Stamp asset version (cache-busting)
+        # Rewrite every ?v=… in index.html to this commit's short SHA so each
+        # deploy serves fresh JS/CSS automatically — no manual version bump.
+        run: |
+          sed -i -E "s/\?v=[0-9A-Za-z._-]+/?v=${GITHUB_SHA::8}/g" index.html
+          echo "Stamped assets with ?v=${GITHUB_SHA::8}"
+          grep -o 'assets/js/app.js?v=[0-9A-Za-z._-]*' index.html || true
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
